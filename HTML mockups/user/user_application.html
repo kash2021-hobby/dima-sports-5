@@ -1,0 +1,262 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>User Application</title>
+</head>
+
+<body>
+  <h2>Player Application Form</h2>
+
+  <!-- APPLICATION STATE -->
+  <input type="hidden" id="appState" value="DRAFT" />
+
+  <!-- BASIC IDENTITY -->
+  <fieldset>
+    <legend>Basic Identity</legend>
+
+    <label>
+      Full Name<br />
+      <input type="text" id="fullName" required />
+    </label><br /><br />
+
+    <label>
+      Date of Birth<br />
+      <input type="date" id="dob" required onchange="calculateAgeBracket()" />
+    </label><br /><br />
+
+    <label>
+      Gender<br />
+      <select id="gender" required>
+        <option value="">Select</option>
+        <option>Male</option>
+        <option>Female</option>
+        <option>Other</option>
+      </select>
+    </label><br /><br />
+
+    <label>
+      Nationality<br />
+      <input type="text" id="nationality" />
+    </label><br /><br />
+
+    <label>
+      Playing Category / Age Bracket<br />
+      <input type="text" id="ageBracket" readonly />
+    </label>
+  </fieldset>
+
+  <br />
+
+  <!-- PLAYER CONTACT -->
+  <fieldset>
+    <legend>Player Contact</legend>
+
+    <label>
+      Mobile Number<br />
+      <input type="tel" id="playerPhone" required />
+    </label>
+  </fieldset>
+
+  <br />
+
+  <!-- FOOTBALL BASICS -->
+  <fieldset>
+    <legend>Football Basics</legend>
+
+    <label>
+      Primary Position (multi-select)<br />
+      <select id="position" multiple>
+        <option>Goalkeeper</option>
+        <option>Defender</option>
+        <option>Midfielder</option>
+        <option>Forward</option>
+      </select>
+    </label><br /><br />
+
+    <label>
+      Dominant Foot (multi-select)<br />
+      <select id="foot" multiple>
+        <option>Right</option>
+        <option>Left</option>
+        <option>Both</option>
+      </select>
+    </label><br /><br />
+
+    <label>
+      Height (cm)<br />
+      <input type="number" id="height" />
+    </label><br /><br />
+
+    <label>
+      Weight (kg)<br />
+      <input type="number" id="weight" />
+    </label>
+  </fieldset>
+
+  <br />
+
+  <!-- LOCATION & PREFERENCES -->
+  <fieldset>
+    <legend>Location & Preferences</legend>
+
+    <label>
+      City<br />
+      <input type="text" id="city" />
+    </label><br /><br />
+
+    <label>
+      State<br />
+      <input type="text" id="state" />
+    </label><br /><br />
+
+    <label>
+      Pincode<br />
+      <input type="text" id="pincode" />
+    </label><br /><br />
+
+    <label>
+      Preferred Team(s) (Select at least one)<br />
+      <select id="teams" multiple required>
+        <option value="team_a">Team A</option>
+        <option value="team_b">Team B</option>
+        <option value="team_c">Team C</option>
+      </select>
+    </label>
+  </fieldset>
+
+  <br />
+
+  <!-- EMERGENCY CONTACT -->
+  <fieldset>
+    <legend>Emergency Contact</legend>
+
+    <label>
+      Contact Name<br />
+      <input type="text" id="emgName" />
+    </label><br /><br />
+
+    <label>
+      Phone Number<br />
+      <input type="tel" id="emgPhone" />
+    </label><br /><br />
+
+    <label>
+      Relationship<br />
+      <input type="text" id="emgRelation" />
+    </label>
+  </fieldset>
+
+  <br />
+
+  <!-- DOCUMENT UPLOAD -->
+  <fieldset>
+    <legend>Documents Upload</legend>
+
+    <label>
+      Identity Proof (Required)<br />
+      <input type="file" id="idProof" accept=".pdf,image/*" required />
+    </label><br /><br />
+
+    <label>
+      Age Proof (Optional)<br />
+      <input type="file" id="ageProof" accept=".pdf,image/*" />
+    </label><br /><br />
+
+    <label>
+      Passport Photo<br />
+      <input type="file" id="playerPhoto" accept="image/*" />
+    </label>
+  </fieldset>
+
+  <br />
+
+  <!-- DECLARATION -->
+  <fieldset>
+    <legend>Declaration & Submit</legend>
+
+    <label>
+      <input type="checkbox" id="declaration" />
+      I confirm the above information is accurate.
+    </label>
+  </fieldset>
+
+  <br />
+
+  <!-- ACTION BUTTONS -->
+  <button type="button" onclick="saveDraft()">Save Draft</button>
+  <button type="button" onclick="submitApplication()">Submit Application</button>
+
+  <p id="statusMsg"></p>
+
+  <!-- INLINE JS -->
+  <script>
+    function calculateAgeBracket() {
+      const dobValue = document.getElementById("dob").value;
+      if (!dobValue) return;
+
+      const dob = new Date(dobValue);
+      const today = new Date();
+
+      let age = today.getFullYear() - dob.getFullYear();
+      const m = today.getMonth() - dob.getMonth();
+      if (m < 0 || (m === 0 && today.getDate() < dob.getDate())) {
+        age--;
+      }
+
+      let bracket = "Senior";
+      if (age < 13) bracket = "U13";
+      else if (age < 15) bracket = "U15";
+      else if (age < 18) bracket = "U18";
+
+      document.getElementById("ageBracket").value = bracket;
+    }
+
+    function getAllInputs() {
+      return document.querySelectorAll("input, select, button");
+    }
+
+    function saveDraft() {
+      statusMsg.innerText = "Draft saved. You can continue editing.";
+    }
+
+    function submitApplication() {
+      if (!declaration.checked) {
+        alert("You must confirm the declaration before submitting.");
+        return;
+      }
+
+      if (
+        !fullName.value ||
+        !dob.value ||
+        !gender.value ||
+        !playerPhone.value
+      ) {
+        alert("Please complete all required identity and contact fields.");
+        return;
+      }
+
+      if (teams.selectedOptions.length === 0) {
+        alert("Please select at least one preferred team.");
+        return;
+      }
+
+      if (!idProof.files.length) {
+        alert("Identity proof is required.");
+        return;
+      }
+
+      document.getElementById("appState").value = "SUBMITTED";
+      lockForm();
+
+      statusMsg.innerText =
+        "Application submitted successfully. Editing is now locked.";
+    }
+
+    function lockForm() {
+      getAllInputs().forEach((el) => (el.disabled = true));
+    }
+  </script>
+</body>
+</html>
