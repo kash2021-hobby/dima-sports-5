@@ -722,35 +722,56 @@ export async function adminGetTeamPlayers(req: AuthRequest, res: Response): Prom
       orderBy: { submittedAt: 'desc' },
     });
 
-    const players = applications
-      .filter((app) => {
-        if (!app.user.player) return false;
-        if (!app.preferredTeamIds) return false;
+    const matchedApps = applications.filter((app) => {
+      if (!app.user.player) return false;
+      if (!app.preferredTeamIds) return false;
 
-        let preferred: string[] = [];
-        try {
-          preferred = JSON.parse(app.preferredTeamIds || '[]');
-        } catch {
-          preferred = [];
-        }
+      let preferred: string[] = [];
+      try {
+        preferred = JSON.parse(app.preferredTeamIds || '[]');
+      } catch {
+        preferred = [];
+      }
 
-        return preferred.includes(team.teamId) || preferred.includes(team.id);
-      })
-      .map((app) => {
-        const player = app.user.player!;
-        return {
-          playerId: player.playerId,
-          playerInternalId: player.id,
-          displayName: player.displayName,
-          footballStatus: player.footballStatus,
-          createdAt: player.createdAt,
-          userId: app.user.id,
-          userPhone: app.user.phone,
-          userEmail: app.user.email,
-          applicationId: app.id,
-          applicationSubmittedAt: app.submittedAt,
-        };
+      return preferred.includes(team.teamId) || preferred.includes(team.id);
+    });
+
+    const applicationIds = matchedApps.map((app) => app.id);
+    let applicationPhotoMap = new Map<string, string>();
+    if (applicationIds.length > 0) {
+      const photoDocs = await prisma.document.findMany({
+        where: {
+          ownerType: 'PLAYER_APPLICATION',
+          ownerId: { in: applicationIds },
+          documentType: { in: ['PHOTO', 'ID_PROOF', 'ID_CARD'] },
+        },
+        select: { ownerId: true, documentType: true, fileUrl: true },
       });
+      for (const appId of applicationIds) {
+        const docs = photoDocs.filter((d) => d.ownerId === appId);
+        const preferred = docs.find((d) => d.documentType === 'PHOTO') || docs.find((d) => d.documentType === 'ID_PROOF') || docs.find((d) => d.documentType === 'ID_CARD');
+        if (preferred?.fileUrl) applicationPhotoMap.set(appId, preferred.fileUrl);
+      }
+    }
+
+    const players = matchedApps.map((app) => {
+      const player = app.user.player!;
+      const photo = player.photo || applicationPhotoMap.get(app.id) || null;
+      return {
+        playerId: player.playerId,
+        playerInternalId: player.id,
+        fullName: app.fullName,
+        displayName: player.displayName,
+        footballStatus: player.footballStatus,
+        createdAt: player.createdAt,
+        userId: app.user.id,
+        userPhone: app.user.phone,
+        userEmail: app.user.email,
+        applicationId: app.id,
+        applicationSubmittedAt: app.submittedAt,
+        photo,
+      };
+    });
 
     res.json({
       success: true,

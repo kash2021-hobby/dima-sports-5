@@ -1,4 +1,5 @@
 import { Request, Response } from 'express';
+import path from 'path';
 import prisma from '../config/database';
 import { notifyTrialAssignment } from '../services/notification.service';
 import { AuthRequest } from '../middleware/auth.middleware';
@@ -302,7 +303,7 @@ export async function evaluateTrial(req: AuthRequest, res: Response): Promise<vo
     }
 
     const { trialId } = req.params;
-    const { outcome, notes } = req.body;
+    const { outcome, notes, isAadhaarVerified } = req.body;
 
     if (!outcome) {
       res.status(400).json({ success: false, message: 'outcome is required (RECOMMENDED, NOT_RECOMMENDED, NEEDS_RETEST)' });
@@ -347,6 +348,11 @@ export async function evaluateTrial(req: AuthRequest, res: Response): Promise<vo
     }
 
     // Update trial - auto-assign to coach if not already assigned
+    const aadhaarVerifiedFlag =
+      typeof isAadhaarVerified === 'string'
+        ? isAadhaarVerified.toLowerCase() === 'true'
+        : Boolean(isAadhaarVerified);
+
     const updatedTrial = await prisma.$transaction(async (tx) => {
       const trialUpdate = await tx.trial.update({
         where: { id: trialId },
@@ -356,12 +362,13 @@ export async function evaluateTrial(req: AuthRequest, res: Response): Promise<vo
           notes: notes || null,
           evaluatedAt: new Date(),
           status: 'COMPLETED',
+          aadhaarVerified: aadhaarVerifiedFlag,
         },
       });
 
       // Update application trial status and application status
       const applicationUpdateData: any = { trialStatus: 'COMPLETED' };
-      
+
       // If outcome is RECOMMENDED, set application status to UNDER_REVIEW for admin approval
       if (outcome === 'RECOMMENDED') {
         applicationUpdateData.status = 'UNDER_REVIEW';
@@ -385,6 +392,294 @@ export async function evaluateTrial(req: AuthRequest, res: Response): Promise<vo
   } catch (error: any) {
     console.error('Evaluate trial error:', error);
     res.status(500).json({ success: false, message: 'Failed to evaluate trial', error: error.message });
+  }
+}
+
+/**
+ * Coach: Submit medical form (Football) for a trial
+ */
+export async function submitMedicalForm(req: AuthRequest, res: Response): Promise<void> {
+  try {
+    if (!req.userId || req.userRole !== 'COACH') {
+      res.status(403).json({ success: false, message: 'Coach access required' });
+      return;
+    }
+
+    const { trialId } = req.params;
+    const { answersJson, verified } = req.body;
+
+    if (!answersJson) {
+      res.status(400).json({ success: false, message: 'answersJson is required' });
+      return;
+    }
+
+    let parsedAnswers: unknown;
+    try {
+      parsedAnswers = JSON.parse(answersJson);
+    } catch {
+      res.status(400).json({ success: false, message: 'answersJson must be valid JSON' });
+      return;
+    }
+
+    const isVerified =
+      typeof verified === 'string' ? verified.toLowerCase() === 'true' : Boolean(verified);
+
+    if (!isVerified) {
+      res.status(400).json({
+        success: false,
+        message: 'Coach must explicitly verify the medical checklist before saving',
+      });
+      return;
+    }
+
+    const coach = await prisma.coach.findUnique({
+      where: { userId: req.userId },
+      select: { id: true },
+    });
+
+    if (!coach) {
+      res.status(404).json({ success: false, message: 'Coach profile not found' });
+      return;
+    }
+
+    const trial = await prisma.trial.findUnique({
+      where: { id: trialId },
+    });
+
+    if (!trial) {
+      res.status(404).json({ success: false, message: 'Trial not found' });
+      return;
+    }
+
+    // Allow medical form if:
+    // 1. Trial is assigned to this coach, OR
+    // 2. Trial is unassigned and pending (coach can claim it by submitting)
+    if (trial.assignedCoachId && trial.assignedCoachId !== coach.id) {
+      res.status(403).json({ success: false, message: 'This trial is assigned to another coach' });
+      return;
+    }
+
+    let medicalReportDocumentId: string | null = (trial as any).medicalReportDocumentId || null;
+
+    if (req.file) {
+      const publicFileUrl = `/uploads/${path.basename(req.file.path).replace(/\\/g, '/')}`;
+
+      // Enforce single medical report per application: reuse or replace existing document
+      const existingReports = await prisma.document.findMany({
+        where: {
+          ownerType: 'PLAYER_APPLICATION',
+          ownerId: trial.applicationId,
+          documentType: 'MEDICAL_REPORT_FOOTBALL',
+        },
+        orderBy: { createdAt: 'asc' },
+      });
+
+      const currentId = medicalReportDocumentId;
+      let baseDocument =
+        (currentId && existingReports.find((d) => d.id === currentId)) ||
+        existingReports[existingReports.length - 1] ||
+        null;
+
+      if (!baseDocument) {
+        const created = await prisma.document.create({
+          data: {
+            ownerType: 'PLAYER_APPLICATION',
+            ownerId: trial.applicationId,
+            documentType: 'MEDICAL_REPORT_FOOTBALL',
+            fileUrl: publicFileUrl,
+            fileName: req.file.originalname,
+            fileSize: req.file.size,
+            mimeType: req.file.mimetype,
+            verificationStatus: 'VERIFIED',
+            verifiedBy: req.userId,
+            verifiedAt: new Date(),
+            notes: 'Uploaded by coach from medical form',
+          },
+        });
+        medicalReportDocumentId = created.id;
+      } else {
+        // Update the chosen document and delete any extras
+        const updated = await prisma.document.update({
+          where: { id: baseDocument.id },
+          data: {
+            fileUrl: publicFileUrl,
+            fileName: req.file.originalname,
+            fileSize: req.file.size,
+            mimeType: req.file.mimetype,
+            verificationStatus: 'VERIFIED',
+            verifiedBy: req.userId,
+            verifiedAt: new Date(),
+            notes: 'Uploaded by coach from medical form',
+          },
+        });
+        medicalReportDocumentId = updated.id;
+
+        const extraIds = existingReports
+          .filter((d) => d.id !== updated.id)
+          .map((d) => d.id);
+        if (extraIds.length > 0) {
+          await prisma.document.deleteMany({
+            where: { id: { in: extraIds } },
+          });
+        }
+      }
+    }
+
+    const updateData: any = {
+      assignedCoachId: trial.assignedCoachId || coach.id,
+      medicalChecklistJson: JSON.stringify(parsedAnswers),
+      medicalVerified: isVerified,
+      medicalReportDocumentId: medicalReportDocumentId,
+    };
+
+    const updatedTrial = await prisma.trial.update({
+      where: { id: trialId },
+      data: updateData,
+    });
+
+    res.json({
+      success: true,
+      message: 'Medical form saved successfully',
+      data: { trial: updatedTrial },
+    });
+  } catch (error: any) {
+    console.error('Submit medical form error:', error);
+    const msg = error?.message || '';
+    const schemaHint = /column.*does not exist|Unknown column|medicalChecklistJson|medicalVerified|medicalReportDocumentId/i.test(msg)
+      ? ' Run: npx prisma migrate deploy (with server stopped).'
+      : '';
+    res.status(500).json({
+      success: false,
+      message: 'Failed to save medical form' + schemaHint,
+      error: error.message,
+    });
+  }
+}
+
+/**
+ * Coach: Upload standalone medical report for a trial
+ */
+export async function uploadMedicalReport(req: AuthRequest, res: Response): Promise<void> {
+  try {
+    if (!req.userId || req.userRole !== 'COACH') {
+      res.status(403).json({ success: false, message: 'Coach access required' });
+      return;
+    }
+
+    const { trialId } = req.params;
+
+    if (!req.file) {
+      res.status(400).json({ success: false, message: 'medicalReport file is required' });
+      return;
+    }
+
+    const coach = await prisma.coach.findUnique({
+      where: { userId: req.userId },
+      select: { id: true },
+    });
+
+    if (!coach) {
+      res.status(404).json({ success: false, message: 'Coach profile not found' });
+      return;
+    }
+
+    const trial = await prisma.trial.findUnique({
+      where: { id: trialId },
+    });
+
+    if (!trial) {
+      res.status(404).json({ success: false, message: 'Trial not found' });
+      return;
+    }
+
+    if (trial.assignedCoachId && trial.assignedCoachId !== coach.id) {
+      res.status(403).json({ success: false, message: 'This trial is assigned to another coach' });
+      return;
+    }
+
+    const publicFileUrl = `/uploads/${path.basename(req.file.path).replace(/\\/g, '/')}`;
+
+    // Enforce single medical report per application: reuse or replace existing document
+    const existingReports = await prisma.document.findMany({
+      where: {
+        ownerType: 'PLAYER_APPLICATION',
+        ownerId: trial.applicationId,
+        documentType: 'MEDICAL_REPORT_FOOTBALL',
+      },
+      orderBy: { createdAt: 'asc' },
+    });
+
+    const currentId = (trial as any).medicalReportDocumentId as string | null | undefined;
+    let baseDocument =
+      (currentId && existingReports.find((d) => d.id === currentId)) ||
+      existingReports[existingReports.length - 1] ||
+      null;
+
+    let finalDocumentId: string;
+
+    if (!baseDocument) {
+      const created = await prisma.document.create({
+        data: {
+          ownerType: 'PLAYER_APPLICATION',
+          ownerId: trial.applicationId,
+          documentType: 'MEDICAL_REPORT_FOOTBALL',
+          fileUrl: publicFileUrl,
+          fileName: req.file.originalname,
+          fileSize: req.file.size,
+          mimeType: req.file.mimetype,
+          verificationStatus: 'VERIFIED',
+          verifiedBy: req.userId,
+          verifiedAt: new Date(),
+          notes: 'Uploaded by coach from medical check section',
+        },
+      });
+      finalDocumentId = created.id;
+    } else {
+      const updated = await prisma.document.update({
+        where: { id: baseDocument.id },
+        data: {
+          fileUrl: publicFileUrl,
+          fileName: req.file.originalname,
+          fileSize: req.file.size,
+          mimeType: req.file.mimetype,
+          verificationStatus: 'VERIFIED',
+          verifiedBy: req.userId,
+          verifiedAt: new Date(),
+          notes: 'Uploaded by coach from medical check section',
+        },
+      });
+      finalDocumentId = updated.id;
+
+      const extraIds = existingReports
+        .filter((d) => d.id !== updated.id)
+        .map((d) => d.id);
+      if (extraIds.length > 0) {
+        await prisma.document.deleteMany({
+          where: { id: { in: extraIds } },
+        });
+      }
+    }
+
+    const updatedTrial = await prisma.trial.update({
+      where: { id: trialId },
+      data: {
+        assignedCoachId: trial.assignedCoachId || coach.id,
+        medicalReportDocumentId: finalDocumentId,
+      } as any,
+    });
+
+    res.status(201).json({
+      success: true,
+      message: 'Medical report uploaded successfully',
+      data: { trial: updatedTrial },
+    });
+  } catch (error: any) {
+    console.error('Upload medical report error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to upload medical report',
+      error: error.message,
+    });
   }
 }
 

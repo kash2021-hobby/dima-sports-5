@@ -3,7 +3,8 @@ import prisma from '../config/database';
 import { AuthRequest } from '../middleware/auth.middleware';
 
 /**
- * Get player profile (Core Football Identity + Personal Profile)
+ * Get player profile (full: Core Football Identity + Personal + Application + Documents)
+ * Used by the Player's own Profile module (tabbed view).
  */
 export async function getPlayerProfile(req: AuthRequest, res: Response): Promise<void> {
   try {
@@ -30,9 +31,32 @@ export async function getPlayerProfile(req: AuthRequest, res: Response): Promise
       return;
     }
 
+    const application = await prisma.playerApplication.findUnique({
+      where: { userId: req.userId },
+    });
+
+    const [playerDocuments, applicationDocuments] = await Promise.all([
+      prisma.document.findMany({
+        where: { ownerType: 'PLAYER', ownerId: player.id },
+        orderBy: { createdAt: 'desc' },
+      }),
+      application
+        ? prisma.document.findMany({
+            where: { ownerType: 'PLAYER_APPLICATION', ownerId: application.id },
+            orderBy: { createdAt: 'desc' },
+          })
+        : Promise.resolve([]),
+    ]);
+
+    const documents = [...playerDocuments, ...applicationDocuments];
+
     res.json({
       success: true,
-      data: { player },
+      data: {
+        player: { ...player, documents: playerDocuments },
+        application: application ? { ...application, documents: applicationDocuments } : null,
+        documents,
+      },
     });
   } catch (error: any) {
     console.error('Get player profile error:', error);

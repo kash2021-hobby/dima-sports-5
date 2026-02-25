@@ -28,6 +28,15 @@ export function generateTeamId(): string {
 }
 
 /**
+ * Generate a short tournament ID (e.g., TMT-9F3A)
+ */
+export function generateTournamentId(): string {
+  const prefix = 'TMT';
+  const random = uuidv4().substring(0, 4).toUpperCase();
+  return `${prefix}-${random}`;
+}
+
+/**
  * Generate a unique invite token for coach invite links
  */
 export function generateInviteToken(): string {

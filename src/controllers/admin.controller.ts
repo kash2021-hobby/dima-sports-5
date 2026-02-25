@@ -1,8 +1,12 @@
 import { Request, Response } from 'express';
 import prisma from '../config/database';
-import { generatePlayerId, generateTeamId } from '../utils/helpers';
+import { generatePlayerId, generateTeamId, generateCoachId, formatPhone, isValidPhone, isValidMPIN } from '../utils/helpers';
+import { hashMPIN, setMPIN } from '../services/mpin.service';
 import { notifyApplicationStatus, notifyDocumentVerification } from '../services/notification.service';
 import { AuthRequest } from '../middleware/auth.middleware';
+
+/** Application statuses that count as pending/review for dashboard and approvals */
+const PENDING_REVIEW_STATUSES = ['SUBMITTED', 'UNDER_REVIEW', 'HOLD'] as const;
 
 /**
  * Admin: Get user profile dashboard
@@ -146,11 +150,21 @@ export async function getAllUsers(req: AuthRequest, res: Response): Promise<void
             select: {
               status: true,
               submittedAt: true,
+              fullName: true,
             },
           },
           player: {
             select: {
               playerId: true,
+              photo: true,
+              displayName: true,
+            },
+          },
+          coach: {
+            select: {
+              coachId: true,
+              photo: true,
+              displayName: true,
             },
           },
         },
@@ -176,6 +190,357 @@ export async function getAllUsers(req: AuthRequest, res: Response): Promise<void
   } catch (error: any) {
     console.error('Get all users error:', error);
     res.status(500).json({ success: false, message: 'Failed to get users', error: error.message });
+  }
+}
+
+/**
+ * Admin: Update user (phone, email, status, MPIN, and optionally name/photo on Player or Coach).
+ */
+export async function updateUser(req: AuthRequest, res: Response): Promise<void> {
+  try {
+    if (!req.userId || req.userRole !== 'ADMIN') {
+      res.status(403).json({ success: false, message: 'Admin access required' });
+      return;
+    }
+
+    const { userId } = req.params;
+    const { phone, email, status, mpin, name, photo } = req.body;
+
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      include: { player: true, coach: true },
+    });
+
+    if (!user) {
+      res.status(404).json({ success: false, message: 'User not found' });
+      return;
+    }
+
+    const userData: { phone?: string; email?: string | null; status?: string } = {};
+    if (phone !== undefined && typeof phone === 'string') userData.phone = phone.trim();
+    if (email !== undefined) userData.email = email === '' || email === null ? null : String(email);
+    if (status !== undefined && typeof status === 'string') userData.status = status;
+
+    if (Object.keys(userData).length > 0) {
+      await prisma.user.update({
+        where: { id: userId },
+        data: userData,
+      });
+    }
+
+    if (mpin !== undefined && mpin !== null && String(mpin).trim() !== '') {
+      const mpinStr = String(mpin).trim();
+      if (!isValidMPIN(mpinStr)) {
+        res.status(400).json({ success: false, message: 'MPIN must be 4-6 digits' });
+        return;
+      }
+      await setMPIN(userId, mpinStr);
+    }
+
+    if (user.player && (name !== undefined || photo !== undefined)) {
+      const playerData: { displayName?: string | null; photo?: string | null } = {};
+      if (name !== undefined) playerData.displayName = typeof name === 'string' ? name.trim() || null : null;
+      if (photo !== undefined) playerData.photo = photo === '' || photo === null ? null : String(photo);
+      if (Object.keys(playerData).length > 0) {
+        await prisma.player.update({
+          where: { userId },
+          data: playerData,
+        });
+      }
+    }
+
+    if (user.coach && (name !== undefined || photo !== undefined)) {
+      const coachData: { displayName?: string | null; photo?: string | null } = {};
+      if (name !== undefined) coachData.displayName = typeof name === 'string' ? name.trim() || null : null;
+      if (photo !== undefined) coachData.photo = photo === '' || photo === null ? null : String(photo);
+      if (Object.keys(coachData).length > 0) {
+        await prisma.coach.update({
+          where: { userId },
+          data: coachData,
+        });
+      }
+    }
+
+    res.json({
+      success: true,
+      message: 'User updated successfully',
+    });
+  } catch (error: any) {
+    console.error('Update user error:', error);
+    res.status(500).json({ success: false, message: 'Failed to update user', error: error.message });
+  }
+}
+
+/**
+ * Admin: Create coach account (direct creation, no invite).
+ * Creates User with role COACH, status ACTIVE, and Coach profile. Coach appears in User Management.
+ */
+export async function createCoach(req: AuthRequest, res: Response): Promise<void> {
+  try {
+    if (!req.userId || req.userRole !== 'ADMIN') {
+      res.status(403).json({ success: false, message: 'Admin access required' });
+      return;
+    }
+
+    const { fullName, phone, mpin } = req.body;
+
+    if (!fullName || typeof fullName !== 'string' || !fullName.trim()) {
+      res.status(400).json({ success: false, message: 'Full name is required' });
+      return;
+    }
+
+    if (!phone) {
+      res.status(400).json({ success: false, message: 'Phone number is required' });
+      return;
+    }
+
+    if (!mpin) {
+      res.status(400).json({ success: false, message: 'MPIN is required' });
+      return;
+    }
+
+    const formattedPhone = formatPhone(phone);
+    if (!isValidPhone(formattedPhone)) {
+      res.status(400).json({ success: false, message: 'Invalid phone number format' });
+      return;
+    }
+
+    if (!/^\d{4,6}$/.test(String(mpin))) {
+      res.status(400).json({ success: false, message: 'MPIN must be 4–6 digits' });
+      return;
+    }
+
+    const existing = await prisma.user.findUnique({
+      where: { phone: formattedPhone },
+    });
+    if (existing) {
+      res.status(400).json({ success: false, message: 'A user with this phone number already exists' });
+      return;
+    }
+
+    const mpinHash = await hashMPIN(String(mpin));
+    const coachId = generateCoachId();
+
+    const result = await prisma.$transaction(async (tx) => {
+      const user = await tx.user.create({
+        data: {
+          phone: formattedPhone,
+          role: 'COACH',
+          status: 'ACTIVE',
+          mpinHash,
+        },
+      });
+
+      const coach = await tx.coach.create({
+        data: {
+          coachId,
+          userId: user.id,
+          sport: 'FOOTBALL',
+          ageGroups: '[]',
+          coachingRole: 'ASSISTANT',
+          status: 'ACTIVE',
+          displayName: fullName.trim(),
+        },
+      });
+
+      return { user, coach };
+    });
+
+    res.status(201).json({
+      success: true,
+      message: 'Coach account created successfully. They appear in User Management.',
+      data: {
+        userId: result.user.id,
+        coachId: result.coach.coachId,
+        phone: result.user.phone,
+        fullName: result.coach.displayName,
+      },
+    });
+  } catch (error: any) {
+    console.error('Create coach error:', error);
+    res.status(500).json({ success: false, message: 'Failed to create coach', error: error.message });
+  }
+}
+
+/**
+ * Admin: Create referee user (direct creation).
+ * Creates User with role REFEREE and ACTIVE status. Referee appears in Referee Management.
+ */
+export async function createReferee(req: AuthRequest, res: Response): Promise<void> {
+  try {
+    if (!req.userId || req.userRole !== 'ADMIN') {
+      res.status(403).json({ success: false, message: 'Admin access required' });
+      return;
+    }
+
+    const { phone, name, mpin } = req.body as {
+      phone?: string;
+      name?: string;
+      mpin?: string | number;
+    };
+
+    if (!phone) {
+      res.status(400).json({ success: false, message: 'Phone number is required' });
+      return;
+    }
+
+    if (!mpin && mpin !== 0) {
+      res.status(400).json({ success: false, message: 'mPIN is required' });
+      return;
+    }
+
+    const formattedPhone = formatPhone(phone);
+    if (!isValidPhone(formattedPhone)) {
+      res.status(400).json({ success: false, message: 'Invalid phone number format' });
+      return;
+    }
+
+    const mpinStr = String(mpin);
+    if (!/^\d{4}$/.test(mpinStr)) {
+      res.status(400).json({ success: false, message: 'mPIN must be a 4-digit number' });
+      return;
+    }
+
+    const existing = await prisma.user.findUnique({
+      where: { phone: formattedPhone },
+    });
+    if (existing) {
+      res.status(400).json({ success: false, message: 'A user with this phone number already exists' });
+      return;
+    }
+
+    const mpinHash = await hashMPIN(mpinStr);
+
+    const user = await prisma.user.create({
+      data: {
+        phone: formattedPhone,
+        role: 'REFEREE',
+        status: 'ACTIVE',
+        mpinHash,
+        displayName: typeof name === 'string' && name.trim() ? name.trim() : null,
+      },
+    });
+
+    res.status(201).json({
+      success: true,
+      message: 'Referee created successfully',
+      data: {
+        userId: user.id,
+        phone: user.phone,
+        name: user.displayName,
+        status: user.status,
+        role: user.role,
+      },
+    });
+  } catch (error: any) {
+    console.error('Create referee error:', error);
+    res.status(500).json({ success: false, message: 'Failed to create referee', error: error.message });
+  }
+}
+
+/**
+ * Admin: Get all referees
+ */
+export async function getAllReferees(req: AuthRequest, res: Response): Promise<void> {
+  try {
+    if (!req.userId || req.userRole !== 'ADMIN') {
+      res.status(403).json({ success: false, message: 'Admin access required' });
+      return;
+    }
+
+    const { search, status } = req.query as { search?: string; status?: string };
+
+    const where: any = {
+      role: 'REFEREE',
+    };
+
+    if (status && typeof status === 'string') {
+      where.status = status;
+    }
+
+    if (search && typeof search === 'string' && search.trim()) {
+      const term = search.trim();
+      where.OR = [
+        { phone: { contains: term, mode: 'insensitive' } },
+        { displayName: { contains: term, mode: 'insensitive' } },
+      ];
+    }
+
+    const referees = await prisma.user.findMany({
+      where,
+      orderBy: { createdAt: 'desc' },
+      select: {
+        id: true,
+        phone: true,
+        displayName: true,
+        status: true,
+        createdAt: true,
+      },
+    });
+
+    res.json({
+      success: true,
+      data: { referees },
+    });
+  } catch (error: any) {
+    console.error('Get referees error:', error);
+    res.status(500).json({ success: false, message: 'Failed to get referees', error: error.message });
+  }
+}
+
+/**
+ * Admin: Update referee (name / status)
+ */
+export async function updateReferee(req: AuthRequest, res: Response): Promise<void> {
+  try {
+    if (!req.userId || req.userRole !== 'ADMIN') {
+      res.status(403).json({ success: false, message: 'Admin access required' });
+      return;
+    }
+
+    const { userId } = req.params;
+    const { name, status } = req.body as { name?: string; status?: string };
+
+    if (!userId) {
+      res.status(400).json({ success: false, message: 'User ID is required' });
+      return;
+    }
+
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { id: true, role: true },
+    });
+
+    if (!user || user.role !== 'REFEREE') {
+      res.status(404).json({ success: false, message: 'Referee not found' });
+      return;
+    }
+
+    const data: any = {};
+    if (typeof name === 'string') {
+      data.displayName = name.trim() || null;
+    }
+    if (typeof status === 'string' && status.trim()) {
+      data.status = status.trim();
+    }
+
+    if (Object.keys(data).length === 0) {
+      res.status(400).json({ success: false, message: 'No valid fields to update' });
+      return;
+    }
+
+    await prisma.user.update({
+      where: { id: userId },
+      data,
+    });
+
+    res.json({
+      success: true,
+      message: 'Referee updated successfully',
+    });
+  } catch (error: any) {
+    console.error('Update referee error:', error);
+    res.status(500).json({ success: false, message: 'Failed to update referee', error: error.message });
   }
 }
 
@@ -238,9 +603,15 @@ export async function getAllApplications(req: AuthRequest, res: Response): Promi
         ownerId: { in: applicationIds },
       },
       select: {
+        id: true,
         ownerId: true,
         documentType: true,
         verificationStatus: true,
+        fileUrl: true,
+        fileName: true,
+        fileSize: true,
+        mimeType: true,
+        notes: true,
       },
     });
 
@@ -252,7 +623,44 @@ export async function getAllApplications(req: AuthRequest, res: Response): Promi
       return acc;
     }, {});
 
-    // Add risk indicators
+    // Resolve preferred team IDs to names so frontend can show team names instead of IDs
+    const allPreferredIds = new Set<string>();
+    applications.forEach((app) => {
+      const raw = app.preferredTeamIds;
+      if (!raw || typeof raw !== 'string') return;
+      try {
+        const ids = JSON.parse(raw) as string[];
+        if (Array.isArray(ids)) {
+          ids.forEach((id) => allPreferredIds.add(id));
+        }
+      } catch {
+        // ignore malformed JSON
+      }
+    });
+
+    let teamIdToName: Record<string, string> = {};
+    if (allPreferredIds.size > 0) {
+      const teams = await prisma.team.findMany({
+        where: {
+          OR: [
+            { id: { in: Array.from(allPreferredIds) } },
+            { teamId: { in: Array.from(allPreferredIds) } },
+          ],
+        },
+        select: {
+          id: true,
+          teamId: true,
+          name: true,
+        },
+      });
+
+      teams.forEach((team) => {
+        teamIdToName[team.id] = team.name;
+        teamIdToName[team.teamId] = team.name;
+      });
+    }
+
+    // Add risk indicators, preferredTeamNames and consolidated evaluation snapshot
     const applicationsWithRisks = applications.map((app) => {
       const appDocuments = documentsByApplicationId[app.id] || [];
       const risks: string[] = [];
@@ -279,10 +687,111 @@ export async function getAllApplications(req: AuthRequest, res: Response): Promi
         risks.push('PENDING_DOCUMENTS');
       }
 
+      // Map preferred team IDs to human-readable names
+      let preferredTeamNames: string[] = [];
+      const rawPreferred = app.preferredTeamIds;
+      if (rawPreferred && typeof rawPreferred === 'string') {
+        try {
+          const ids = JSON.parse(rawPreferred) as string[];
+          if (Array.isArray(ids)) {
+            preferredTeamNames = ids
+              .map((id) => teamIdToName[id] || null)
+              .filter((name): name is string => Boolean(name));
+          }
+        } catch {
+          // ignore malformed JSON
+        }
+      }
+
+      // Build consolidated evaluation snapshot for admin
+      const trial: any = app.trial || null;
+
+      // Medical checklist (parsed JSON, if any)
+      let medicalChecklist: unknown = null;
+      if (trial && trial.medicalChecklistJson) {
+        try {
+          medicalChecklist = JSON.parse(trial.medicalChecklistJson as string);
+        } catch {
+          medicalChecklist = trial.medicalChecklistJson;
+        }
+      }
+
+      // Medical report document (if linked)
+      const medicalReport =
+        (trial?.medicalReportDocumentId &&
+          appDocuments.find((d) => d.id === trial.medicalReportDocumentId)) ||
+        appDocuments.find((d) => d.documentType === 'MEDICAL_REPORT_FOOTBALL') ||
+        null;
+
+      // Emergency contacts (parsed JSON snapshot, if available)
+      let emergencyContacts: unknown = null;
+      if (app.emergencyContactsJson) {
+        try {
+          emergencyContacts = JSON.parse(app.emergencyContactsJson as string);
+        } catch {
+          emergencyContacts = app.emergencyContactsJson;
+        }
+      }
+
+      const evaluationSnapshot = {
+        playerSnapshot: {
+          fullName: app.fullName,
+          dateOfBirth: app.dateOfBirth,
+          gender: app.gender,
+          height: app.height,
+          weight: app.weight,
+          nationality: app.nationality,
+        },
+        playingProfile: {
+          sport: app.sport,
+          primaryPosition: app.primaryPosition,
+          dominantFoot: app.dominantFoot,
+        },
+        locationAndPreferences: {
+          city: app.city,
+          district: app.district,
+          state: app.state,
+          pincode: app.pincode,
+          preferredTeamIds: app.preferredTeamIds,
+          preferredTeamNames,
+        },
+        contactInformation: {
+          playerPhone: app.playerPhone,
+          playerEmail: (app as any).playerEmail,
+          emergencyContactName: app.emergencyContactName,
+          emergencyContactPhone: app.emergencyContactPhone,
+          emergencyContactRelation: app.emergencyContactRelation,
+          emergencyContacts,
+        },
+        documents: appDocuments,
+        medicalCheck: {
+          verified: trial?.medicalVerified ?? null,
+          checklist: medicalChecklist,
+          medicalReport,
+        },
+        trialEvaluation: {
+          status: trial?.status ?? null,
+          outcome: trial?.outcome ?? null,
+          notes: trial?.notes ?? null,
+          evaluatedAt: trial?.evaluatedAt ?? null,
+          assignedCoach: trial?.assignedCoach
+            ? {
+                id: trial.assignedCoach.id,
+                coachId: trial.assignedCoach.coachId,
+                displayName: trial.assignedCoach.displayName,
+                phone: trial.assignedCoach.user?.phone,
+                email: trial.assignedCoach.user?.email,
+              }
+            : null,
+        },
+      };
+
       return {
         ...app,
         documents: appDocuments,
         riskIndicators: risks,
+        preferredTeamNames,
+        evaluationSnapshot,
       };
     });
 
@@ -301,8 +810,132 @@ export async function getAllApplications(req: AuthRequest, res: Response): Promi
  */
 export async function getPendingApprovals(req: AuthRequest, res: Response): Promise<void> {
   // Redirect to getAllApplications with status filter
-  req.query.status = ['SUBMITTED', 'UNDER_REVIEW', 'HOLD'];
+  req.query.status = [...PENDING_REVIEW_STATUSES];
   return getAllApplications(req, res);
+}
+
+/**
+ * Admin: Get dashboard stats (counts + recent applications) for admin dashboard
+ */
+export async function getDashboardStats(req: AuthRequest, res: Response): Promise<void> {
+  try {
+    if (!req.userId || req.userRole !== 'ADMIN') {
+      res.status(403).json({ success: false, message: 'Admin access required' });
+      return;
+    }
+
+    const [totalPlayers, pendingApplications, activeTrialsCount, coachesCount, recentRows] = await Promise.all([
+      prisma.player.count(),
+      prisma.playerApplication.count({ where: { status: { in: [...PENDING_REVIEW_STATUSES] } } }),
+      prisma.trial.count({ where: { status: 'PENDING' } }),
+      prisma.coach.count(),
+      prisma.playerApplication.findMany({
+        where: { status: { not: 'DRAFT' } },
+        orderBy: [{ submittedAt: 'desc' }, { createdAt: 'desc' }],
+        take: 10,
+        select: {
+          id: true,
+          fullName: true,
+          preferredTeamIds: true,
+          status: true,
+          submittedAt: true,
+          createdAt: true,
+          user: {
+            select: {
+              player: { select: { photo: true } },
+            },
+          },
+        },
+      }),
+    ]);
+
+    const allPreferredIds = new Set<string>();
+    recentRows.forEach((app) => {
+      const raw = app.preferredTeamIds;
+      if (!raw || typeof raw !== 'string') return;
+      try {
+        const ids = JSON.parse(raw) as string[];
+        if (Array.isArray(ids)) ids.forEach((id) => allPreferredIds.add(id));
+      } catch {
+        // ignore
+      }
+    });
+
+    let teamIdToName: Record<string, string> = {};
+    if (allPreferredIds.size > 0) {
+      const teams = await prisma.team.findMany({
+        where: {
+          OR: [
+            { id: { in: Array.from(allPreferredIds) } },
+            { teamId: { in: Array.from(allPreferredIds) } },
+          ],
+        },
+        select: { id: true, teamId: true, name: true },
+      });
+      teams.forEach((t) => {
+        teamIdToName[t.id] = t.name;
+        teamIdToName[t.teamId] = t.name;
+      });
+    }
+
+    const applicationIds = recentRows.map((r) => r.id);
+    const photoDocs = applicationIds.length > 0
+      ? await prisma.document.findMany({
+          where: {
+            ownerType: 'PLAYER_APPLICATION',
+            ownerId: { in: applicationIds },
+            documentType: { in: ['PHOTO', 'ID_PROOF', 'ID_CARD'] },
+          },
+          select: { ownerId: true, documentType: true, fileUrl: true },
+        })
+      : [];
+    const photoMap = new Map<string, string>();
+    for (const appId of applicationIds) {
+      const docs = photoDocs.filter((d) => d.ownerId === appId);
+      const preferred = docs.find((d) => d.documentType === 'PHOTO') || docs.find((d) => d.documentType === 'ID_PROOF') || docs.find((d) => d.documentType === 'ID_CARD');
+      if (preferred?.fileUrl) photoMap.set(appId, preferred.fileUrl);
+    }
+
+    const recentApplications = recentRows.map((app) => {
+      let preferredTeamNames: string[] = [];
+      const raw = app.preferredTeamIds;
+      if (raw && typeof raw === 'string') {
+        try {
+          const ids = JSON.parse(raw) as string[];
+          if (Array.isArray(ids)) {
+            preferredTeamNames = ids
+              .map((id) => teamIdToName[id] || null)
+              .filter((name): name is string => Boolean(name));
+          }
+        } catch {
+          // ignore
+        }
+      }
+      return {
+        id: app.id,
+        fullName: app.fullName,
+        preferredTeamNames,
+        status: app.status,
+        submittedAt: app.submittedAt,
+        createdAt: app.createdAt,
+        photoUrl: (app as any).user?.player?.photo ?? photoMap.get(app.id) ?? null,
+      };
+    });
+
+    res.json({
+      success: true,
+      data: {
+        totalPlayers,
+        pendingApplications,
+        activeTrialsCount,
+        coachesCount,
+        recentApplications,
+      },
+    });
+  } catch (error: any) {
+    console.error('Get dashboard stats error:', error);
+    res.status(500).json({ success: false, message: 'Failed to get dashboard stats', error: error.message });
+  }
 }
 
 /**
@@ -382,12 +1015,31 @@ export async function approveApplication(req: AuthRequest, res: Response): Promi
           city: application.city,
           state: application.state,
           district: application.district,
+          nationality: application.nationality,
+          displayName: application.fullName,
           emergencyContactName: application.emergencyContactName,
           emergencyContactPhone: application.emergencyContactPhone,
           emergencyContactRelation: application.emergencyContactRelation,
           footballStatus: 'ACTIVE',
         },
       });
+
+      // 2b. Copy profile photo from application document (prefer PHOTO, then ID_PROOF, then ID_CARD)
+      const photoDocs = await tx.document.findMany({
+        where: {
+          ownerType: 'PLAYER_APPLICATION',
+          ownerId: application.id,
+          documentType: { in: ['PHOTO', 'ID_PROOF', 'ID_CARD'] },
+        },
+        select: { documentType: true, fileUrl: true },
+      });
+      const photoDoc = photoDocs.find((d) => d.documentType === 'PHOTO') || photoDocs.find((d) => d.documentType === 'ID_PROOF') || photoDocs.find((d) => d.documentType === 'ID_CARD');
+      if (photoDoc?.fileUrl) {
+        await tx.player.update({
+          where: { id: player.id },
+          data: { photo: photoDoc.fileUrl },
+        });
+      }
 
       // 3. Update user role
       await tx.user.update({
@@ -832,13 +1484,14 @@ export async function getAllPlayers(req: AuthRequest, res: Response): Promise<vo
       ];
     }
 
-    const [players, total] = await Promise.all([
+    const [playersRaw, total] = await Promise.all([
       prisma.player.findMany({
         where,
         select: {
           id: true,
           playerId: true,
           displayName: true,
+          photo: true,
           footballStatus: true,
           primaryPosition: true,
           dominantFoot: true,
@@ -863,6 +1516,8 @@ export async function getAllPlayers(req: AuthRequest, res: Response): Promise<vo
                   id: true,
                   status: true,
                   submittedAt: true,
+                  fullName: true,
+                  preferredTeamIds: true,
                 },
               },
             },
@@ -874,6 +1529,63 @@ export async function getAllPlayers(req: AuthRequest, res: Response): Promise<vo
       }),
       prisma.player.count({ where }),
     ]);
+
+    const applicationIds = [...new Set((playersRaw as any[]).map((p: any) => p.user?.application?.id).filter(Boolean))] as string[];
+    let applicationPhotoMap = new Map<string, string>();
+    if (applicationIds.length > 0) {
+      const photoDocs = await prisma.document.findMany({
+        where: {
+          ownerType: 'PLAYER_APPLICATION',
+          ownerId: { in: applicationIds },
+          documentType: { in: ['PHOTO', 'ID_PROOF', 'ID_CARD'] },
+        },
+        select: { ownerId: true, documentType: true, fileUrl: true },
+      });
+      for (const appId of applicationIds) {
+        const docs = photoDocs.filter((d) => d.ownerId === appId);
+        const preferred = docs.find((d) => d.documentType === 'PHOTO') || docs.find((d) => d.documentType === 'ID_PROOF') || docs.find((d) => d.documentType === 'ID_CARD');
+        if (preferred?.fileUrl) applicationPhotoMap.set(appId, preferred.fileUrl);
+      }
+    }
+
+    const teamIds = new Set<string>();
+    for (const p of playersRaw) {
+      const raw = (p as any).user?.application?.preferredTeamIds;
+      if (typeof raw === 'string') {
+        try {
+          const arr = JSON.parse(raw) as string[];
+          if (Array.isArray(arr)) arr.forEach((id) => teamIds.add(id));
+        } catch {
+          // ignore
+        }
+      }
+    }
+    const teamMap = new Map<string, string>();
+    if (teamIds.size > 0) {
+      const teams = await prisma.team.findMany({
+        where: { OR: [{ id: { in: [...teamIds] } }, { teamId: { in: [...teamIds] } }] },
+        select: { id: true, teamId: true, name: true },
+      });
+      for (const t of teams) {
+        teamMap.set(t.id, t.name);
+        teamMap.set(t.teamId, t.name);
+      }
+    }
+    const players = playersRaw.map((p: any) => {
+      const app = p.user?.application;
+      let assignedTeamNames: string[] = [];
+      if (app?.preferredTeamIds) {
+        try {
+          const ids = JSON.parse(app.preferredTeamIds) as string[];
+          if (Array.isArray(ids))
+            assignedTeamNames = ids.map((id) => teamMap.get(id) || id).filter(Boolean);
+        } catch {
+          // ignore
+        }
+      }
+      const photo = p.photo || (app?.id ? applicationPhotoMap.get(app.id) : null) || null;
+      return { ...p, assignedTeamNames, photo };
+    });
 
     res.json({
       success: true,
@@ -976,5 +1688,57 @@ export async function getPlayerProfile(req: AuthRequest, res: Response): Promise
   } catch (error: any) {
     console.error('Get player profile error:', error);
     res.status(500).json({ success: false, message: 'Failed to get player profile', error: error.message });
+  }
+}
+
+/**
+ * Admin: One-time sync – copy profile photo from application document to player.photo for players who don't have one
+ */
+export async function syncPlayerPhotos(req: AuthRequest, res: Response): Promise<void> {
+  try {
+    if (!req.userId || req.userRole !== 'ADMIN') {
+      res.status(403).json({ success: false, message: 'Admin access required' });
+      return;
+    }
+
+    const playersWithoutPhoto = await prisma.player.findMany({
+      where: { OR: [{ photo: null }, { photo: '' }] },
+      select: { id: true, userId: true },
+    });
+
+    let updated = 0;
+    for (const player of playersWithoutPhoto) {
+      const application = await prisma.playerApplication.findUnique({
+        where: { userId: player.userId },
+        select: { id: true },
+      });
+      if (!application) continue;
+
+      const photoDocs = await prisma.document.findMany({
+        where: {
+          ownerType: 'PLAYER_APPLICATION',
+          ownerId: application.id,
+          documentType: { in: ['PHOTO', 'ID_PROOF', 'ID_CARD'] },
+        },
+        select: { documentType: true, fileUrl: true },
+      });
+      const photoDoc = photoDocs.find((d) => d.documentType === 'PHOTO') || photoDocs.find((d) => d.documentType === 'ID_PROOF') || photoDocs.find((d) => d.documentType === 'ID_CARD');
+      if (photoDoc?.fileUrl) {
+        await prisma.player.update({
+          where: { id: player.id },
+          data: { photo: photoDoc.fileUrl },
+        });
+        updated++;
+      }
+    }
+
+    res.json({
+      success: true,
+      message: `Synced profile photos. Updated ${updated} of ${playersWithoutPhoto.length} players without photo.`,
+      data: { updated, total: playersWithoutPhoto.length },
+    });
+  } catch (error: any) {
+    console.error('Sync player photos error:', error);
+    res.status(500).json({ success: false, message: 'Failed to sync player photos', error: error.message });
   }
 }

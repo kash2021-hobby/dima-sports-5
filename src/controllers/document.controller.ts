@@ -108,7 +108,10 @@ export async function uploadDocument(req: AuthRequest, res: Response): Promise<v
         fileName: req.file.originalname,
         fileSize: req.file.size,
         mimeType: req.file.mimetype,
-        verificationStatus: 'PENDING',
+        // Admin verification is currently disabled; treat upload as verified
+        verificationStatus: 'VERIFIED',
+        verifiedBy: req.userId,
+        verifiedAt: new Date(),
         notes: typeof notes === 'string' ? notes : null,
       },
     });

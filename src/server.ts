@@ -12,6 +12,7 @@ import trialRoutes from './routes/trial.routes';
 import adminRoutes from './routes/admin.routes';
 import playerRoutes from './routes/player.routes';
 import teamRoutes from './routes/team.routes';
+import tournamentRoutes from './routes/tournament.routes';
 import { config as appConfig } from './config/env';
 
 const app = express();
@@ -53,6 +54,7 @@ app.use('/api/trial', trialRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/player', playerRoutes);
 app.use('/api/teams', teamRoutes);
+app.use('/api/admin/tournaments', tournamentRoutes);
 
 // 404 handler
 app.use((req: Request, res: Response) => {

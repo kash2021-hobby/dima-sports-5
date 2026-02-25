@@ -29,8 +29,10 @@ export async function createOrUpdateApplication(req: AuthRequest, res: Response)
       pincode,
       nationality,
       playerPhone,
+      playerEmail,
       preferredTeamIds,
       emergencyContactsJson,
+      aadhaarNumber,
       emergencyContactName,
       emergencyContactPhone,
       emergencyContactRelation,
@@ -78,6 +80,64 @@ export async function createOrUpdateApplication(req: AuthRequest, res: Response)
       return;
     }
 
+    // Enforce phone uniqueness between player and emergency contacts (including JSON list)
+    const normalizeForCompare = (value: unknown): string => String(value || '').replace(/\D/g, '');
+    const playerPhoneCompare = normalizeForCompare(playerPhone);
+    const primaryEmergencyCompare = normalizeForCompare(emergencyContactPhone);
+
+    if (playerPhoneCompare && primaryEmergencyCompare && playerPhoneCompare === primaryEmergencyCompare) {
+      res.status(400).json({
+        success: false,
+        message: 'Emergency contact phone number must be different from player mobile number',
+      });
+      return;
+    }
+
+    let emergencyPhonesFromJson: string[] = [];
+    if (typeof emergencyContactsJson === 'string' && emergencyContactsJson.trim().startsWith('[')) {
+      try {
+        const parsed = JSON.parse(emergencyContactsJson) as unknown;
+        if (Array.isArray(parsed)) {
+          emergencyPhonesFromJson = parsed
+            .map((c: any) => normalizeForCompare(c?.phone))
+            .filter((p: string) => typeof p === 'string' && p.length > 0);
+        }
+      } catch {
+        // ignore JSON parsing issues; they are not critical for uniqueness
+      }
+    }
+
+    if (
+      playerPhoneCompare &&
+      emergencyPhonesFromJson.some((p) => p === playerPhoneCompare)
+    ) {
+      res.status(400).json({
+        success: false,
+        message: 'Emergency contact phone numbers must be different from player mobile number',
+      });
+      return;
+    }
+
+    const uniqueEmergencyPhones = new Set(emergencyPhonesFromJson);
+    if (uniqueEmergencyPhones.size !== emergencyPhonesFromJson.length) {
+      res.status(400).json({
+        success: false,
+        message: 'Emergency contact phone numbers must be different from each other',
+      });
+      return;
+    }
+
+    const normalizeAadhaar = (value: unknown): string => String(value || '').replace(/\D/g, '');
+    const aadhaarNormalized = normalizeAadhaar(aadhaarNumber);
+
+    if (aadhaarNormalized && !/^\d{12}$/.test(aadhaarNormalized)) {
+      res.status(400).json({
+        success: false,
+        message: 'Invalid Aadhaar number (must be exactly 12 digits)',
+      });
+      return;
+    }
+
     // Check for duplicate application (same phone + DOB + name)
     const existingApp = await prisma.playerApplication.findUnique({
       where: { userId: req.userId },
@@ -109,6 +169,33 @@ export async function createOrUpdateApplication(req: AuthRequest, res: Response)
       return;
     }
 
+    // Check Aadhaar uniqueness across all users (if provided)
+    if (aadhaarNormalized) {
+      const existingWithAadhaar = await prisma.playerApplication.findFirst({
+        where: {
+          aadhaarNumber: aadhaarNormalized,
+          userId: { not: req.userId },
+        },
+      });
+
+      if (existingWithAadhaar) {
+        res.status(400).json({
+          success: false,
+          message: 'This Aadhaar number is already registered',
+        });
+        return;
+      }
+    }
+
+    // Persist player email to User when provided
+    if (playerEmail !== undefined) {
+      const emailValue = typeof playerEmail === 'string' ? playerEmail.trim() : '';
+      await prisma.user.update({
+        where: { id: req.userId },
+        data: { email: emailValue || null },
+      });
+    }
+
     // Create or update application
     const application = existingApp
       ? await prisma.playerApplication.update({
@@ -128,6 +215,7 @@ export async function createOrUpdateApplication(req: AuthRequest, res: Response)
             pincode: pincode ? String(pincode) : null,
             nationality: nationality ? String(nationality) : null,
             playerPhone: formattedPlayerPhone,
+            aadhaarNumber: aadhaarNormalized || null,
             preferredTeamIds: normalizeStringOrArray(preferredTeamIds),
             emergencyContactsJson: typeof emergencyContactsJson === 'string' ? emergencyContactsJson : null,
             emergencyContactName: emergencyContactName.trim(),
@@ -153,6 +241,7 @@ export async function createOrUpdateApplication(req: AuthRequest, res: Response)
             pincode: pincode ? String(pincode) : null,
             nationality: nationality ? String(nationality) : null,
             playerPhone: formattedPlayerPhone,
+            aadhaarNumber: aadhaarNormalized || null,
             preferredTeamIds: normalizeStringOrArray(preferredTeamIds),
             emergencyContactsJson: typeof emergencyContactsJson === 'string' ? emergencyContactsJson : null,
             emergencyContactName: emergencyContactName.trim(),
@@ -186,6 +275,12 @@ export async function getApplication(req: AuthRequest, res: Response): Promise<v
     const application = await prisma.playerApplication.findUnique({
       where: { userId: req.userId },
       include: {
+        user: {
+          select: {
+            email: true,
+            phone: true,
+          },
+        },
         trial: {
           include: {
             assignedCoach: {
@@ -207,6 +302,51 @@ export async function getApplication(req: AuthRequest, res: Response): Promise<v
       return;
     }
 
+    // Resolve preferred team IDs to human-readable names for the player view
+    let preferredTeamNames: string[] = [];
+    const rawPreferred = application.preferredTeamIds;
+    let preferredIds: string[] = [];
+
+    if (rawPreferred && typeof rawPreferred === 'string') {
+      try {
+        const parsed = JSON.parse(rawPreferred) as unknown;
+        if (Array.isArray(parsed)) {
+          preferredIds = parsed.filter((id): id is string => typeof id === 'string');
+        }
+      } catch {
+        preferredIds = String(rawPreferred)
+          .split(',')
+          .map((s) => s.trim())
+          .filter((s) => s.length > 0);
+      }
+    }
+
+    if (preferredIds.length > 0) {
+      const teams = await prisma.team.findMany({
+        where: {
+          OR: [
+            { id: { in: preferredIds } },
+            { teamId: { in: preferredIds } },
+          ],
+        },
+        select: {
+          id: true,
+          teamId: true,
+          name: true,
+        },
+      });
+
+      const teamIdToName: Record<string, string> = {};
+      teams.forEach((team) => {
+        teamIdToName[team.id] = team.name;
+        teamIdToName[team.teamId] = team.name;
+      });
+
+      preferredTeamNames = preferredIds
+        .map((id) => teamIdToName[id] || null)
+        .filter((name): name is string => Boolean(name));
+    }
+
     const documents = await prisma.document.findMany({
       where: {
         ownerType: 'PLAYER_APPLICATION',
@@ -217,16 +357,68 @@ export async function getApplication(req: AuthRequest, res: Response): Promise<v
         documentType: true,
         verificationStatus: true,
         createdAt: true,
+        fileUrl: true,
+        fileName: true,
+        fileSize: true,
+        mimeType: true,
       },
     });
 
     res.json({
       success: true,
-      data: { application: { ...application, documents } },
+      data: { application: { ...application, documents, preferredTeamNames } },
     });
   } catch (error: any) {
     console.error('Get application error:', error);
     res.status(500).json({ success: false, message: 'Failed to get application', error: error.message });
+  }
+}
+
+/**
+ * Check if an Aadhaar number is already registered
+ */
+export async function checkAadhaar(req: AuthRequest, res: Response): Promise<void> {
+  try {
+    if (!req.userId) {
+      res.status(401).json({ success: false, message: 'Authentication required' });
+      return;
+    }
+
+    const rawNumber = (req.query.number as string | undefined) || (req.query.aadhaarNumber as string | undefined);
+    const normalizeAadhaar = (value: unknown): string => String(value || '').replace(/\D/g, '');
+    const aadhaarNormalized = normalizeAadhaar(rawNumber);
+
+    if (!aadhaarNormalized) {
+      res.status(400).json({ success: false, message: 'Aadhaar number is required' });
+      return;
+    }
+
+    if (!/^\d{12}$/.test(aadhaarNormalized)) {
+      res.status(400).json({ success: false, message: 'Invalid Aadhaar number (must be exactly 12 digits)' });
+      return;
+    }
+
+    const existing = await prisma.playerApplication.findFirst({
+      where: {
+        aadhaarNumber: aadhaarNormalized,
+        userId: { not: req.userId },
+      },
+      select: { id: true },
+    });
+
+    const alreadyRegistered = Boolean(existing);
+
+    res.json({
+      success: true,
+      data: {
+        aadhaarNumber: aadhaarNormalized,
+        alreadyRegistered,
+        available: !alreadyRegistered,
+      },
+    });
+  } catch (error: any) {
+    console.error('Check Aadhaar error:', error);
+    res.status(500).json({ success: false, message: 'Failed to check Aadhaar number', error: error.message });
   }
 }
 
@@ -277,6 +469,34 @@ export async function submitApplication(req: AuthRequest, res: Response): Promis
       return;
     }
 
+    // Validate Aadhaar number
+    const normalizeAadhaar = (value: unknown): string => String(value || '').replace(/\D/g, '');
+    const aadhaarNormalized = normalizeAadhaar(application.aadhaarNumber);
+
+    if (!aadhaarNormalized || !/^\d{12}$/.test(aadhaarNormalized)) {
+      res.status(400).json({
+        success: false,
+        message: 'Please enter a valid 12-digit Aadhaar number before submitting',
+      });
+      return;
+    }
+
+    const aadhaarDuplicate = await prisma.playerApplication.findFirst({
+      where: {
+        aadhaarNumber: aadhaarNormalized,
+        userId: { not: req.userId },
+      },
+      select: { id: true },
+    });
+
+    if (aadhaarDuplicate) {
+      res.status(400).json({
+        success: false,
+        message: 'This Aadhaar number is already registered',
+      });
+      return;
+    }
+
     // Validate preferred teams (must select at least one)
     const preferredTeamsRaw = application.preferredTeamIds;
     let preferredTeams: unknown = null;
@@ -302,6 +522,19 @@ export async function submitApplication(req: AuthRequest, res: Response): Promis
     });
     if (idProofCount < 1) {
       res.status(400).json({ success: false, message: 'Identity proof (ID_PROOF) is required before submitting' });
+      return;
+    }
+
+    // Validate required documents: Aadhaar card photo must be uploaded
+    const aadhaarCardCount = await prisma.document.count({
+      where: {
+        ownerType: 'PLAYER_APPLICATION',
+        ownerId: application.id,
+        documentType: 'AADHAAR_CARD',
+      },
+    });
+    if (aadhaarCardCount < 1) {
+      res.status(400).json({ success: false, message: 'Aadhaar Card Photo is required before submitting' });
       return;
     }
 

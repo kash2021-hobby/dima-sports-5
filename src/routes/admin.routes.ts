@@ -10,11 +10,24 @@ router.use(requireAdmin);
 
 // User Management
 router.get('/users', adminController.getAllUsers);
+router.patch('/users/:userId', adminController.updateUser);
 router.get('/users/:userId', adminController.getUserDashboard);
+
+// Referee Management
+router.post('/referees', adminController.createReferee);
+router.get('/referees', adminController.getAllReferees);
+router.patch('/referees/:userId', adminController.updateReferee);
+
+// Coach Management (direct account creation)
+router.post('/coaches', adminController.createCoach);
 
 // Players
 router.get('/players', adminController.getAllPlayers);
+router.post('/players/sync-photos', adminController.syncPlayerPhotos);
 router.get('/players/:playerId', adminController.getPlayerProfile);
+
+// Dashboard stats (admin)
+router.get('/dashboard-stats', adminController.getDashboardStats);
 
 // Application Approval
 router.get('/applications', adminController.getAllApplications);

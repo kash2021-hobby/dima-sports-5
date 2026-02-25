@@ -12,12 +12,13 @@ datasource db {
 // ============================================
 
 model User {
-  id       String  @id @default(cuid())
-  phone    String  @unique
-  email    String?
-  mpinHash String?
-  role     String  @default("USER") // USER, PLAYER, COACH, ADMIN
-  status   String  @default("ACTIVE") // ACTIVE, BLOCKED, INVITED, VERIFIED, SUSPENDED
+  id          String  @id @default(cuid())
+  phone       String  @unique
+  email       String?
+  mpinHash    String?
+  role        String  @default("USER") // USER, PLAYER, COACH, ADMIN, REFEREE
+  status      String  @default("ACTIVE") // ACTIVE, BLOCKED, INVITED, VERIFIED, SUSPENDED
+  displayName String?
 
   // MPIN Security
   mpinAttempts    Int       @default(0)
@@ -41,6 +42,10 @@ model User {
   verifiedDocuments    Document[]          @relation("DocumentVerifier")
   teamRequestsCreated  TeamCreationRequest[] @relation("TeamRequestRequester")
   teamRequestsReviewed TeamCreationRequest[] @relation("TeamRequestReviewer")
+  createdTournaments   Tournament[]        @relation("TournamentCreator")
+  publishedTournaments Tournament[]        @relation("TournamentPublisher")
+  tournamentSnapshots  TournamentConfigSnapshot[] @relation("TournamentSnapshotCreator")
+  refereeAssignments   TournamentRefereeAssignment[] @relation("UserRefereeAssignments")
 
   @@index([phone])
   @@index([role])
@@ -87,6 +92,10 @@ model Player {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  // Tournament relations
+  captainOfTournamentApplications TournamentApplication[] @relation("TournamentCaptain")
+  tournamentApplicationPlayers    TournamentApplicationPlayer[] @relation("TournamentApplicationPlayer_Player")
+
   @@index([playerId])
   @@index([footballStatus])
   @@map("players")
@@ -115,6 +124,7 @@ model PlayerApplication {
   pincode                  String?
   nationality              String?
   playerPhone              String?
+  aadhaarNumber            String?
   // JSON array of Team IDs or Team codes, e.g. ["TEAM-1","TEAM-2"]
   preferredTeamIds         String?
   emergencyContactName     String?
@@ -191,6 +201,7 @@ model Coach {
   trialEvaluations Trial[]
   teamAssignments  TeamCoach[]
   teamRequests     TeamCreationRequest[]
+  tournamentApplications TournamentApplication[]
 
   @@index([coachId])
   @@index([status])
@@ -235,11 +246,17 @@ model Trial {
   outcome     String? // RECOMMENDED, NOT_RECOMMENDED, NEEDS_RETEST
   notes       String?
   evaluatedAt DateTime?
+  aadhaarVerified Boolean?
 
   // Scheduling
   scheduledDate DateTime?
   scheduledTime String?
   venue         String?
+
+  // Medical form (Football)
+  medicalChecklistJson   String? // JSON of coach medical checklist answers
+  medicalVerified        Boolean?
+  medicalReportDocumentId String?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -283,18 +300,57 @@ model Document {
 // ============================================
 
 model Tournament {
-  id             String  @id @default(cuid())
-  tournamentId   String  @unique
-  name           String
-  sport          String
-  level          String // DISTRICT, STATE, NATIONAL
+  id           String @id @default(cuid())
+  tournamentId String @unique
+  name         String
+  sport        String
+  level        String // DISTRICT, STATE, NATIONAL
   genderCategory String?
   ageCategory    String?
-  status         String  @default("DRAFT") // DRAFT, PUBLISHED, ONGOING, COMPLETED
+  status         String @default("DRAFT") // DRAFT, PUBLISHED, ONGOING, COMPLETED
+
+  // Identity & venue
+  venue  String?
+  format String? // KNOCKOUT, LEAGUE, GROUP_KNOCKOUT, etc.
+
+  numberOfTeams Int?
 
   startDate            DateTime?
   endDate              DateTime?
   registrationDeadline DateTime?
+
+  // Format & structure
+  matchDurationMinutes Int?
+  numberOfHalves       Int?
+  pointsForWin         Int @default(3)
+  pointsForDraw        Int @default(1)
+  pointsForLoss        Int @default(0)
+  tieBreakRules        String? // JSON or comma-separated list
+
+  // Squad & eligibility
+  minSquadSize      Int?
+  maxSquadSize      Int?
+  minAge            Int?
+  maxAge            Int?
+  requiredDocuments String? // JSON array of document type identifiers
+
+  // Financial control
+  entryFeeCents        Int?
+  prizePoolDescription String?
+
+  // Audit & lifecycle
+  createdBy       String?
+  createdByUser   User?   @relation("TournamentCreator", fields: [createdBy], references: [id])
+  publishedBy     String?
+  publishedByUser User?   @relation("TournamentPublisher", fields: [publishedBy], references: [id])
+  publishedAt     DateTime?
+  ongoingSince    DateTime?
+  completedAt     DateTime?
+
+  // Relations
+  configSnapshots TournamentConfigSnapshot[]
+  applications    TournamentApplication[]
+  refereeAssignments TournamentRefereeAssignment[] @relation("TournamentReferees")
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -302,6 +358,77 @@ model Tournament {
   @@index([status])
   @@index([sport])
   @@map("tournaments")
+}
+
+model TournamentConfigSnapshot {
+  id             String     @id @default(cuid())
+  tournamentDbId String
+  tournament     Tournament @relation(fields: [tournamentDbId], references: [id], onDelete: Cascade)
+  snapshotAt     DateTime   @default(now())
+  snapshotBy     String?
+  snapshotByUser User?      @relation("TournamentSnapshotCreator", fields: [snapshotBy], references: [id])
+  configJson     String
+
+  @@index([tournamentDbId])
+  @@map("tournament_config_snapshots")
+}
+
+model TournamentApplication {
+  id             String     @id @default(cuid())
+  tournamentDbId String
+  tournament     Tournament @relation(fields: [tournamentDbId], references: [id], onDelete: Cascade)
+
+  coachId String
+  coach   Coach   @relation(fields: [coachId], references: [id], onDelete: Cascade)
+
+  teamName String
+  notes    String?
+
+  status      String   @default("APPLIED") // APPLIED, UNDER_REVIEW, APPROVED, REJECTED
+  submittedAt DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  captainPlayerId String?
+  captain         Player?  @relation("TournamentCaptain", fields: [captainPlayerId], references: [id])
+
+  applicationPlayers TournamentApplicationPlayer[]
+
+  @@unique([tournamentDbId, coachId])
+  @@index([coachId])
+  @@index([tournamentDbId])
+  @@map("tournament_applications")
+}
+
+model TournamentApplicationPlayer {
+  id            String                @id @default(cuid())
+  applicationId String
+  application   TournamentApplication @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+
+  playerId String
+  player   Player  @relation("TournamentApplicationPlayer_Player", fields: [playerId], references: [id], onDelete: Cascade)
+
+  @@unique([applicationId, playerId])
+  @@index([playerId])
+  @@map("tournament_application_players")
+}
+
+model TournamentRefereeAssignment {
+  id           String     @id @default(cuid())
+  tournamentId String
+  tournament   Tournament @relation("TournamentReferees", fields: [tournamentId], references: [id], onDelete: Cascade)
+
+  refereeId String
+  referee   User @relation("UserRefereeAssignments", fields: [refereeId], references: [id], onDelete: Cascade)
+
+  assignedDate DateTime
+  role         String // CENTER, LINESMAN, etc.
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([tournamentId, assignedDate])
+  @@index([refereeId])
+  @@map("tournament_referee_assignments")
 }
 
 model Team {

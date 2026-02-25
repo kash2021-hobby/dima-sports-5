@@ -1,109 +1,11 @@
 import { Request, Response } from 'express';
 import prisma from '../config/database';
-import { generateCoachId, generateInviteToken, formatPhone, isValidPhone } from '../utils/helpers';
-import { generateAndStoreOTP, verifyOTP, clearOTP } from '../services/otp.service';
+import { verifyOTP, clearOTP } from '../services/otp.service';
 import { setMPIN } from '../services/mpin.service';
 import { AuthRequest } from '../middleware/auth.middleware';
 
 /**
- * Admin: Create coach invite
- */
-export async function createCoachInvite(req: AuthRequest, res: Response): Promise<void> {
-  try {
-    if (!req.userId || req.userRole !== 'ADMIN') {
-      res.status(403).json({ success: false, message: 'Admin access required' });
-      return;
-    }
-
-    const { phone, email, sport, ageGroups, coachingRole, specializationTags, yearsExperience } = req.body;
-
-    if (!phone) {
-      res.status(400).json({ success: false, message: 'Phone number is required' });
-      return;
-    }
-
-    const formattedPhone = formatPhone(phone);
-    
-    if (!isValidPhone(formattedPhone)) {
-      res.status(400).json({ success: false, message: 'Invalid phone number format' });
-      return;
-    }
-
-    // Check if user already exists
-    let user = await prisma.user.findUnique({
-      where: { phone: formattedPhone },
-    });
-
-    if (user && user.role === 'COACH') {
-      res.status(400).json({ success: false, message: 'Coach with this phone already exists' });
-      return;
-    }
-
-    // Create user if doesn't exist
-    if (!user) {
-      user = await prisma.user.create({
-        data: {
-          phone: formattedPhone,
-          email,
-          role: 'COACH',
-          status: 'INVITED',
-        },
-      });
-    } else {
-      // Update existing user
-      user = await prisma.user.update({
-        where: { id: user.id },
-        data: {
-          email,
-          role: 'COACH',
-          status: 'INVITED',
-        },
-      });
-    }
-
-    // Create coach profile with invite token
-    const coachId = generateCoachId();
-    const inviteToken = generateInviteToken();
-    const coach = await prisma.coach.create({
-      data: {
-        coachId,
-        userId: user.id,
-        sport: sport || 'FOOTBALL',
-        ageGroups: JSON.stringify(ageGroups || []),
-        coachingRole: coachingRole || 'ASSISTANT',
-        specializationTags: specializationTags ? JSON.stringify(specializationTags) : null,
-        yearsExperience,
-        status: 'INVITED',
-        inviteToken,
-        invitedBy: req.userId,
-      },
-    });
-
-    // Generate and send OTP
-    await generateAndStoreOTP(user.id, formattedPhone);
-
-    // Generate invite link URL (frontend URL)
-    const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173';
-    const inviteLink = `${frontendUrl}/invite/${inviteToken}`;
-
-    res.status(201).json({
-      success: true,
-      message: 'Coach invite sent. OTP sent to phone.',
-      data: { 
-        coach, 
-        userId: user.id,
-        inviteLink,
-        inviteToken,
-      },
-    });
-  } catch (error: any) {
-    console.error('Create coach invite error:', error);
-    res.status(500).json({ success: false, message: 'Failed to create coach invite', error: error.message });
-  }
-}
-
-/**
- * Public: Get invite by token (for accessing coach login via invite link)
+ * Public: Get invite by token (legacy; invite links no longer used)
  */
 export async function getInviteByToken(req: Request, res: Response): Promise<void> {
   try {
