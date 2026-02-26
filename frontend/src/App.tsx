@@ -67,6 +67,7 @@ function App() {
   const [signupOtp, setSignupOtp] = useState('')
   const [signupMpin, setSignupMpin] = useState('')
   const [signupUserId, setSignupUserId] = useState<string | null>(null)
+  const [signupSessionId, setSignupSessionId] = useState<string | null>(null)
   const [signupStep, setSignupStep] = useState<'phone' | 'otp' | 'mpin' | 'done'>('phone')
   const [signupMessage, setSignupMessage] = useState<string | null>(null)
   const [isLoadingMe, setIsLoadingMe] = useState(false)
@@ -411,9 +412,10 @@ function App() {
         setError(data?.message || 'Failed to send OTP')
         return
       }
-      setSignupUserId(data.data.userId)
+      setSignupSessionId(data.data.sessionId)
+      setSignupUserId(null)
       setSignupStep('otp')
-      setSignupMessage('OTP sent. Check server console for the code.')
+      setSignupMessage('OTP sent via SMS. Please check your messages.')
     } catch (err) {
       setError('Cannot reach backend. Make sure the server is running.')
     }
@@ -422,25 +424,35 @@ function App() {
   async function verifySignupOtp() {
     setError(null)
     setSignupMessage(null)
-    if (!signupUserId) {
+    if (!signupOtp) {
+      setError('OTP is required')
+      return
+    }
+    if (!signupSessionId) {
       setError('Missing signup session. Please try again.')
       return
     }
-    if (!signupOtp) {
-      setError('OTP is required')
+    if (!signupPhone) {
+      setError('Phone number is required')
       return
     }
     try {
       const res = await fetch(`${API_BASE_URL}/api/auth/verify-otp`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ userId: signupUserId, otpCode: signupOtp }),
+        body: JSON.stringify({
+          sessionId: signupSessionId,
+          otpCode: signupOtp,
+          phone: signupPhone,
+        }),
       })
       const data = await res.json()
       if (!res.ok || !data?.success) {
         setError(data?.message || 'OTP verification failed')
         return
       }
+      setSignupUserId(data.data.userId)
+      setSignupSessionId(null)
       setSignupStep('mpin')
       setSignupMessage('OTP verified. Please set your MPIN.')
     } catch (err) {
@@ -451,25 +463,9 @@ function App() {
   async function resendSignupOtp() {
     setError(null)
     setSignupMessage(null)
-    if (!signupUserId) {
-      setError('Missing signup session. Please try again.')
-      return
-    }
-    try {
-      const res = await fetch(`${API_BASE_URL}/api/auth/resend-otp`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ userId: signupUserId }),
-      })
-      const data = await res.json()
-      if (!res.ok || !data?.success) {
-        setError(data?.message || 'Failed to resend OTP')
-        return
-      }
-      setSignupMessage('OTP resent. Check server console for the new code.')
-    } catch (err) {
-      setError('Cannot reach backend. Make sure the server is running.')
-    }
+    // Session-based resend endpoint is not implemented yet.
+    // For now, ask the user to restart the signup flow.
+    setError('Resend OTP is not available yet. Please go back and start signup again.')
   }
 
   async function setupSignupMpin() {
@@ -540,6 +536,14 @@ function App() {
     setExtraDocuments([])
     setActiveModuleId('dashboard')
     setActiveTab('')
+    // Reset signup flow state
+    setSignupPhone('')
+    setSignupOtp('')
+    setSignupMpin('')
+    setSignupUserId(null)
+    setSignupSessionId(null)
+    setSignupStep('phone')
+    setSignupMessage(null)
   }
 
   useEffect(() => {
@@ -1078,6 +1082,7 @@ function App() {
       setSignupOtp('')
       setSignupMpin('')
       setSignupUserId(null)
+      setSignupSessionId(null)
     }
   }
 
