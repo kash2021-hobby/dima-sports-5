@@ -26,6 +26,14 @@ export const config = {
   twilioAccountSid: process.env.TWILIO_ACCOUNT_SID || '',
   twilioAuthToken: process.env.TWILIO_AUTH_TOKEN || '',
   twilioFromNumber: process.env.TWILIO_FROM_NUMBER || '',
+
+  // Railway Storage Bucket (S3 Compatible)
+  bucketEndpoint: process.env.BUCKET_ENDPOINT || '',
+  bucketRegion: process.env.BUCKET_REGION || '',
+  bucketName: process.env.BUCKET_NAME || '',
+  bucketAccessKeyId: process.env.BUCKET_ACCESS_KEY_ID || '',
+  bucketSecretAccessKey: process.env.BUCKET_SECRET_ACCESS_KEY || '',
+  bucketUrl: process.env.BUCKET_URL || '',
   
   // Firebase
   firebaseProjectId: process.env.FIREBASE_PROJECT_ID || '',

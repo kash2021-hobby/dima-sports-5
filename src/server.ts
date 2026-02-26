@@ -13,7 +13,6 @@ import adminRoutes from './routes/admin.routes';
 import playerRoutes from './routes/player.routes';
 import teamRoutes from './routes/team.routes';
 import tournamentRoutes from './routes/tournament.routes';
-import { config as appConfig } from './config/env';
 
 const app = express();
 
@@ -21,9 +20,6 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
-
-// Serve uploaded files so "View" works in frontend
-app.use('/uploads', express.static(appConfig.uploadDir));
 
 // Health check
 app.get('/health', async (req: Request, res: Response) => {

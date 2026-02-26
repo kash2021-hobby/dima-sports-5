@@ -1,29 +1,14 @@
 import { Request, Response } from 'express';
 import multer from 'multer';
 import path from 'path';
-import fs from 'fs';
 import prisma from '../config/database';
 import { config } from '../config/env';
 import { notifyDocumentVerification } from '../services/notification.service';
 import { AuthRequest } from '../middleware/auth.middleware';
+import { uploadFile, getPresignedUrl } from '../services/storage.service';
 
-// Ensure upload directory exists
-const uploadDir = config.uploadDir;
-if (!fs.existsSync(uploadDir)) {
-  fs.mkdirSync(uploadDir, { recursive: true });
-}
-
-// Configure multer for file uploads
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => {
-    cb(null, uploadDir);
-  },
-  filename: (req, file, cb) => {
-    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
-    const ext = path.extname(file.originalname);
-    cb(null, `${file.fieldname}-${uniqueSuffix}${ext}`);
-  },
-});
+// Configure multer for file uploads (memory storage, files kept in-memory as Buffer)
+const storage = multer.memoryStorage();
 
 const fileFilter = (req: Request, file: Express.Multer.File, cb: multer.FileFilterCallback) => {
   const ext = path.extname(file.originalname).toLowerCase().substring(1);
@@ -71,8 +56,6 @@ export async function uploadDocument(req: AuthRequest, res: Response): Promise<v
       });
       
       if (!application) {
-        // Clean up uploaded file
-        fs.unlinkSync(req.file.path);
         res.status(404).json({ success: false, message: 'Application not found' });
         return;
       }
@@ -84,27 +67,26 @@ export async function uploadDocument(req: AuthRequest, res: Response): Promise<v
       });
       
       if (!player) {
-        fs.unlinkSync(req.file.path);
         res.status(404).json({ success: false, message: 'Player profile not found' });
         return;
       }
       
       ownerId = player.id;
     } else {
-      fs.unlinkSync(req.file.path);
       res.status(400).json({ success: false, message: 'Invalid ownerType' });
       return;
     }
 
-    // Create document record
-    // Store URL as a public path served by /uploads static route
-    const publicFileUrl = `/uploads/${path.basename(req.file.path).replace(/\\/g, '/')}`;
+    // Upload file to S3-compatible storage and store key in DB
+    const key = `${ownerType}/${Date.now()}-${req.file.originalname}`;
+    const uploadedKey = await uploadFile(req.file.buffer, key, req.file.mimetype);
+
     const document = await prisma.document.create({
       data: {
         ownerType,
         ownerId,
         documentType,
-        fileUrl: publicFileUrl,
+        fileUrl: uploadedKey,
         fileName: req.file.originalname,
         fileSize: req.file.size,
         mimeType: req.file.mimetype,
@@ -123,9 +105,6 @@ export async function uploadDocument(req: AuthRequest, res: Response): Promise<v
     });
   } catch (error: any) {
     console.error('Upload document error:', error);
-    if (req.file) {
-      fs.unlinkSync(req.file.path);
-    }
     res.status(500).json({ success: false, message: 'Failed to upload document', error: error.message });
   }
 }
@@ -161,9 +140,16 @@ export async function getMyDocuments(req: AuthRequest, res: Response): Promise<v
       orderBy: { createdAt: 'desc' },
     });
 
+    const documentsWithSignedUrls = await Promise.all(
+      documents.map(async (doc) => ({
+        ...doc,
+        fileUrl: await getPresignedUrl(doc.fileUrl),
+      })),
+    );
+
     res.json({
       success: true,
-      data: { documents },
+      data: { documents: documentsWithSignedUrls },
     });
   } catch (error: any) {
     console.error('Get documents error:', error);
@@ -216,9 +202,11 @@ export async function getDocument(req: AuthRequest, res: Response): Promise<void
       return;
     }
 
+    const signedUrl = await getPresignedUrl(document.fileUrl);
+
     res.json({
       success: true,
-      data: { document },
+      data: { document: { ...document, fileUrl: signedUrl } },
     });
   } catch (error: any) {
     console.error('Get document error:', error);
