@@ -55,6 +55,7 @@ model User {
 
 model OtpSession {
   id           String   @id @default(cuid())
+  phone        String?
   otpCode      String?
   otpExpiresAt DateTime?
   verified     Boolean  @default(false)

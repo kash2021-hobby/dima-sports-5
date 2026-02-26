@@ -114,7 +114,7 @@ export async function clearOTP(userId: string): Promise<void> {
 }
 
 /**
- * Create an OTP session for phone verification without storing the phone number in the database.
+ * Create an OTP session for phone verification.
  * Returns a sessionId that the client must send back along with the OTP code.
  */
 export async function createPhoneOtpSession(phone: string): Promise<string> {
@@ -124,13 +124,14 @@ export async function createPhoneOtpSession(phone: string): Promise<string> {
 
   const session = await prisma.otpSession.create({
     data: {
+      phone,
       otpCode,
       otpExpiresAt: expiresAt,
       verified: false,
     },
   });
 
-  // Send OTP via SMS using the provided phone (not stored in DB)
+  // Send OTP via SMS using the provided phone
   await sendOTP(phone, otpCode);
 
   return session.id;
