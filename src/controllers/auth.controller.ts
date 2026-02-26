@@ -1,6 +1,12 @@
 import { Request, Response } from 'express';
 import prisma from '../config/database';
-import { generateAndStoreOTP, verifyOTP, clearOTP } from '../services/otp.service';
+import {
+  generateAndStoreOTP,
+  verifyOTP,
+  clearOTP,
+  createPhoneOtpSession,
+  verifyPhoneOtpSession,
+} from '../services/otp.service';
 import { setMPIN, verifyMPIN, isMPINLocked, incrementMPINAttempts, resetMPINAttempts } from '../services/mpin.service';
 import { generateToken } from '../services/jwt.service';
 import { formatPhone, isValidPhone, isValidMPIN } from '../utils/helpers';
@@ -35,22 +41,13 @@ export async function signup(req: Request, res: Response): Promise<void> {
       return;
     }
 
-    // Create user
-    const user = await prisma.user.create({
-      data: {
-        phone: formattedPhone,
-        role: 'USER',
-        status: 'ACTIVE',
-      },
-    });
-
-    // Generate and send OTP
-    await generateAndStoreOTP(user.id, formattedPhone);
+    // Create an OTP session without storing the phone number in the database.
+    const sessionId = await createPhoneOtpSession(formattedPhone);
 
     res.status(201).json({
       success: true,
       message: 'OTP sent to your phone',
-      data: { userId: user.id },
+      data: { sessionId },
     });
   } catch (error: any) {
     console.error('Signup error:', error);
@@ -63,27 +60,49 @@ export async function signup(req: Request, res: Response): Promise<void> {
  */
 export async function verifyOTPCode(req: Request, res: Response): Promise<void> {
   try {
-    const { userId, otpCode } = req.body;
+    const { sessionId, otpCode, phone } = req.body;
 
-    if (!userId || !otpCode) {
-      res.status(400).json({ success: false, message: 'UserId and OTP code are required' });
+    if (!sessionId || !otpCode || !phone) {
+      res.status(400).json({
+        success: false,
+        message: 'SessionId, phone, and OTP code are required',
+      });
       return;
     }
 
-    const isValid = await verifyOTP(userId, otpCode);
+    const formattedPhone = formatPhone(phone);
+
+    // Ensure this phone is not already registered
+    const existingUser = await prisma.user.findUnique({
+      where: { phone: formattedPhone },
+    });
+
+    if (existingUser) {
+      res.status(400).json({ success: false, message: 'Phone number already registered' });
+      return;
+    }
+
+    const isValid = await verifyPhoneOtpSession(sessionId, otpCode);
 
     if (!isValid) {
       res.status(400).json({ success: false, message: 'Invalid or expired OTP' });
       return;
     }
 
-    // Clear OTP after successful verification
-    await clearOTP(userId);
+    // Create the user only after successful OTP verification, storing the phone now.
+    const user = await prisma.user.create({
+      data: {
+        phone: formattedPhone,
+        role: 'USER',
+        status: 'ACTIVE',
+        otpVerified: true,
+      },
+    });
 
     res.json({
       success: true,
       message: 'OTP verified successfully',
-      data: { verified: true },
+      data: { verified: true, userId: user.id },
     });
   } catch (error: any) {
     console.error('OTP verification error:', error);

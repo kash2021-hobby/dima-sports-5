@@ -53,6 +53,17 @@ model User {
   @@map("users")
 }
 
+model OtpSession {
+  id           String   @id @default(cuid())
+  otpCode      String?
+  otpExpiresAt DateTime?
+  verified     Boolean  @default(false)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@map("otp_sessions")
+}
+
 // ============================================
 // PLAYER MODELS
 // ============================================

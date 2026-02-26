@@ -22,6 +22,11 @@ export const config = {
   otpExpiryMinutes: parseInt(process.env.OTP_EXPIRY_MINUTES || '10', 10),
   otpLength: parseInt(process.env.OTP_LENGTH || '6', 10),
   
+  // Twilio (SMS)
+  twilioAccountSid: process.env.TWILIO_ACCOUNT_SID || '',
+  twilioAuthToken: process.env.TWILIO_AUTH_TOKEN || '',
+  twilioFromNumber: process.env.TWILIO_FROM_NUMBER || '',
+  
   // Firebase
   firebaseProjectId: process.env.FIREBASE_PROJECT_ID || '',
   firebasePrivateKey: process.env.FIREBASE_PRIVATE_KEY?.replace(/\\n/g, '\n') || '',
@@ -38,7 +43,13 @@ export const config = {
 };
 
 // Validate required environment variables
-const requiredEnvVars = ['DATABASE_URL', 'JWT_SECRET'];
+const requiredEnvVars = [
+  'DATABASE_URL',
+  'JWT_SECRET',
+  'TWILIO_ACCOUNT_SID',
+  'TWILIO_AUTH_TOKEN',
+  'TWILIO_FROM_NUMBER',
+];
 
 if (config.nodeEnv === 'production') {
   requiredEnvVars.forEach((varName) => {
