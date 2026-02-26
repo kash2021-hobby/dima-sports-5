@@ -154,7 +154,7 @@ export function TournamentDetailPage({
   const [assignmentsByDate, setAssignmentsByDate] = useState<
     Record<string, LocalRefAssignment[]>
   >({})
-  const [isLoadingAssignments, setIsLoadingAssignments] = useState(false)
+  const [, setIsLoadingAssignments] = useState(false)
   const [isSearchingReferees, setIsSearchingReferees] = useState(false)
   const [refereeResults, setRefereeResults] = useState<
     { id: string; name?: string | null; phone: string; status: string }[]

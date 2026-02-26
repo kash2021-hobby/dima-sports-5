@@ -1,4 +1,3 @@
-import React from 'react'
 import { X, Copy } from 'lucide-react'
 
 type AadhaarVerificationModalProps = {

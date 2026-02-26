@@ -11,7 +11,6 @@ import {
   FileText,
   ClipboardCheck,
   Bell,
-  Award,
   UserCircle,
   ShieldCheck,
   RefreshCw,
@@ -5424,7 +5423,7 @@ function App() {
                                       <tbody>
                                         {trials.filter(t => t.status === 'PENDING').map((trial) => {
                                           const name = trial.application?.fullName || 'N/A'
-                                          const initials = name !== 'N/A' ? name.split(/\s+/).map((s) => s[0]).slice(0, 2).join('').toUpperCase() : '?'
+                                          const initials = name !== 'N/A' ? name.split(/\s+/).map((s: string) => s[0]).slice(0, 2).join('').toUpperCase() : '?'
                                           const phone =
                                             trial.application?.playerPhone ||
                                             (trial.application as any)?.user?.phone ||
@@ -5487,7 +5486,14 @@ function App() {
                                       <tbody>
                                         {trials.filter(t => t.status === 'COMPLETED').map((trial) => {
                                           const name = trial.application?.fullName || 'N/A'
-                                          const initials = name !== 'N/A' ? name.split(/\s+/).map((s) => s[0]).slice(0, 2).join('').toUpperCase() : '?'
+                                          const initials = name !== 'N/A'
+                                            ? name
+                                                .split(/\s+/)
+                                                .map((s: string) => s[0])
+                                                .slice(0, 2)
+                                                .join('')
+                                                .toUpperCase()
+                                            : '?'
                                           const phone =
                                             trial.application?.playerPhone ||
                                             (trial.application as any)?.user?.phone ||
@@ -5548,7 +5554,7 @@ function App() {
                                       <tbody>
                                         {trials.filter(t => t.outcome === 'NEEDS_RETEST').map((trial) => {
                                           const name = trial.application?.fullName || 'N/A'
-                                          const initials = name !== 'N/A' ? name.split(/\s+/).map((s) => s[0]).slice(0, 2).join('').toUpperCase() : '?'
+                                          const initials = name !== 'N/A' ? name.split(/\s+/).map((s: string) => s[0]).slice(0, 2).join('').toUpperCase() : '?'
                                           const phone =
                                             trial.application?.playerPhone ||
                                             (trial.application as any)?.user?.phone ||
