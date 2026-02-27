@@ -2,12 +2,11 @@ import { Readable } from 'stream';
 import { google } from 'googleapis';
 import { config } from '../config/env';
 
-const driveAuth = new google.auth.JWT(
-  config.googleDriveServiceAccountEmail,
-  undefined,
-  config.googleDrivePrivateKey,
-  ['https://www.googleapis.com/auth/drive'],
-);
+const driveAuth = new google.auth.JWT({
+  email: config.googleDriveServiceAccountEmail,
+  key: config.googleDrivePrivateKey,
+  scopes: ['https://www.googleapis.com/auth/drive'],
+});
 
 const drive = google.drive({ version: 'v3', auth: driveAuth });
 
