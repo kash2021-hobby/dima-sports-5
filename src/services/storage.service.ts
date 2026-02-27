@@ -2,13 +2,22 @@ import { Readable } from 'stream';
 import { google } from 'googleapis';
 import { config } from '../config/env';
 
-const driveAuth = new google.auth.JWT({
-  email: config.googleDriveServiceAccountEmail,
-  key: config.googleDrivePrivateKey,
-  scopes: ['https://www.googleapis.com/auth/drive'],
-});
+const oauth2Client = new google.auth.OAuth2(
+  config.googleDriveClientId,
+  config.googleDriveClientSecret,
+  config.googleDriveRedirectUri,
+);
 
-const drive = google.drive({ version: 'v3', auth: driveAuth });
+if (!config.googleDriveRefreshToken) {
+  // eslint-disable-next-line no-console
+  console.warn('GOOGLE_DRIVE_REFRESH_TOKEN is not set. Google Drive operations will fail.');
+} else {
+  oauth2Client.setCredentials({
+    refresh_token: config.googleDriveRefreshToken,
+  });
+}
+
+const drive = google.drive({ version: 'v3', auth: oauth2Client });
 
 export async function uploadFile(
   buffer: Buffer,

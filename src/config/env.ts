@@ -36,8 +36,10 @@ export const config = {
   bucketUrl: process.env.BUCKET_URL || '',
   
   // Google Drive
-  googleDriveServiceAccountEmail: process.env.GOOGLE_DRIVE_SERVICE_ACCOUNT_EMAIL || '',
-  googleDrivePrivateKey: process.env.GOOGLE_DRIVE_PRIVATE_KEY?.replace(/\\n/g, '\n') || '',
+  googleDriveClientId: process.env.GOOGLE_DRIVE_CLIENT_ID || '',
+  googleDriveClientSecret: process.env.GOOGLE_DRIVE_CLIENT_SECRET || '',
+  googleDriveRedirectUri: process.env.GOOGLE_DRIVE_REDIRECT_URI || '',
+  googleDriveRefreshToken: process.env.GOOGLE_DRIVE_REFRESH_TOKEN || '',
   googleDriveFolderId: process.env.GOOGLE_DRIVE_FOLDER_ID || '',
   
   // Firebase
