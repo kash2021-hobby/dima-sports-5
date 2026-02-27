@@ -1,5 +1,6 @@
 import { Request, Response } from 'express';
 import prisma from '../config/database';
+import { getPresignedUrl } from '../services/storage.service';
 import { AuthRequest } from '../middleware/auth.middleware';
 
 /**
@@ -48,13 +49,29 @@ export async function getPlayerProfile(req: AuthRequest, res: Response): Promise
         : Promise.resolve([]),
     ]);
 
-    const documents = [...playerDocuments, ...applicationDocuments];
+    const signedPlayerDocuments = await Promise.all(
+      playerDocuments.map(async (doc) => ({
+        ...doc,
+        fileUrl: await getPresignedUrl(doc.fileUrl),
+      })),
+    );
+
+    const signedApplicationDocuments = await Promise.all(
+      applicationDocuments.map(async (doc) => ({
+        ...doc,
+        fileUrl: await getPresignedUrl(doc.fileUrl),
+      })),
+    );
+
+    const documents = [...signedPlayerDocuments, ...signedApplicationDocuments];
+
+    const playerPhotoUrl = player.photo ? await getPresignedUrl(player.photo) : null;
 
     res.json({
       success: true,
       data: {
-        player: { ...player, documents: playerDocuments },
-        application: application ? { ...application, documents: applicationDocuments } : null,
+        player: { ...player, photo: playerPhotoUrl, documents: signedPlayerDocuments },
+        application: application ? { ...application, documents: signedApplicationDocuments } : null,
         documents,
       },
     });

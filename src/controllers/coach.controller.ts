@@ -2,6 +2,7 @@ import { Request, Response } from 'express';
 import prisma from '../config/database';
 import { verifyOTP, clearOTP } from '../services/otp.service';
 import { setMPIN } from '../services/mpin.service';
+import { getPresignedUrl } from '../services/storage.service';
 import { AuthRequest } from '../middleware/auth.middleware';
 
 /**
@@ -571,13 +572,31 @@ export async function getPlayerProfileForCoach(req: AuthRequest, res: Response):
       }),
     ]);
 
+    const signedPlayerDocuments = await Promise.all(
+      playerDocuments.map(async (doc) => ({
+        ...doc,
+        fileUrl: await getPresignedUrl(doc.fileUrl),
+      })),
+    );
+
+    const signedApplicationDocuments = await Promise.all(
+      applicationDocuments.map(async (doc) => ({
+        ...doc,
+        fileUrl: await getPresignedUrl(doc.fileUrl),
+      })),
+    );
+
+    const documents = [...signedPlayerDocuments, ...signedApplicationDocuments];
+    const playerPhotoUrl = player.photo ? await getPresignedUrl(player.photo) : null;
+
     res.json({
       success: true,
       data: {
         player: {
           ...player,
+          photo: playerPhotoUrl,
           teams: matchedTeams,
-          documents: playerDocuments,
+          documents: signedPlayerDocuments,
         },
         application: {
           id: application.id,
@@ -586,7 +605,7 @@ export async function getPlayerProfileForCoach(req: AuthRequest, res: Response):
           reviewedAt: application.reviewedAt,
           status: application.status,
         },
-        documents: [...playerDocuments, ...applicationDocuments],
+        documents,
       },
     });
   } catch (error: any) {

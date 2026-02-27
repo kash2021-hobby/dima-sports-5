@@ -3,6 +3,7 @@ import prisma from '../config/database';
 import { generatePlayerId, generateTeamId, generateCoachId, formatPhone, isValidPhone, isValidMPIN } from '../utils/helpers';
 import { hashMPIN, setMPIN } from '../services/mpin.service';
 import { notifyApplicationStatus, notifyDocumentVerification } from '../services/notification.service';
+import { getPresignedUrl } from '../services/storage.service';
 import { AuthRequest } from '../middleware/auth.middleware';
 
 /** Application statuses that count as pending/review for dashboard and approvals */
@@ -1674,15 +1675,33 @@ export async function getPlayerProfile(req: AuthRequest, res: Response): Promise
         : Promise.resolve([]),
     ]);
 
+    const signedPlayerDocuments = await Promise.all(
+      playerDocuments.map(async (doc) => ({
+        ...doc,
+        fileUrl: await getPresignedUrl(doc.fileUrl),
+      })),
+    );
+
+    const signedApplicationDocuments = await Promise.all(
+      applicationDocuments.map(async (doc) => ({
+        ...doc,
+        fileUrl: await getPresignedUrl(doc.fileUrl),
+      })),
+    );
+
+    const documents = [...signedPlayerDocuments, ...signedApplicationDocuments];
+    const playerPhotoUrl = player.photo ? await getPresignedUrl(player.photo) : null;
+
     res.json({
       success: true,
       data: {
         player: {
           ...player,
-          documents: playerDocuments,
+          photo: playerPhotoUrl,
+          documents: signedPlayerDocuments,
         },
-        application: application ? { ...application, documents: applicationDocuments } : null,
-        documents: [...playerDocuments, ...applicationDocuments],
+        application: application ? { ...application, documents: signedApplicationDocuments } : null,
+        documents,
       },
     });
   } catch (error: any) {
