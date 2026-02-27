@@ -226,14 +226,38 @@ export async function downloadDocumentFile(req: AuthRequest, res: Response): Pro
 
     const { fileKey } = req.params;
 
+    // eslint-disable-next-line no-console
+    console.log('[downloadDocumentFile] Incoming fileKey param:', fileKey);
+
     const document = await prisma.document.findFirst({
       where: { fileUrl: fileKey },
     });
 
+    // eslint-disable-next-line no-console
+    console.log('[downloadDocumentFile] Document lookup where clause:', {
+      field: 'fileUrl',
+      valueSearched: fileKey,
+    });
+
     if (!document) {
+      // eslint-disable-next-line no-console
+      console.warn('[downloadDocumentFile] No document found for given fileKey.', {
+        searchedField: 'fileUrl',
+        valueSearched: fileKey,
+      });
       res.status(404).json({ success: false, message: 'Document not found' });
       return;
     }
+
+    // eslint-disable-next-line no-console
+    console.log('[downloadDocumentFile] Found document from DB:', document);
+    // eslint-disable-next-line no-console
+    console.log('[downloadDocumentFile] Stored values in DB for fileUrl (Drive file identifier):', {
+      documentId: document.id,
+      fileUrlColumnValue: document.fileUrl,
+      fileName: document.fileName,
+      mimeType: document.mimeType,
+    });
 
     const application = await prisma.playerApplication.findUnique({
       where: { userId: req.userId },
@@ -249,6 +273,9 @@ export async function downloadDocumentFile(req: AuthRequest, res: Response): Pro
       res.status(403).json({ success: false, message: 'Access denied' });
       return;
     }
+
+    // eslint-disable-next-line no-console
+    console.log('[downloadDocumentFile] Streaming file from Drive using fileKey (interpreted as Drive fileId):', fileKey);
 
     const stream = await getDriveFileStream(fileKey);
 
