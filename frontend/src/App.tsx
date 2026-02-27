@@ -161,7 +161,6 @@ function App() {
   type DashboardStats = {
     totalPlayers: number
     pendingApplications: number
-    activeTrialsCount: number
     coachesCount: number
     recentApplications: Array<{
       id: string
@@ -1173,8 +1172,6 @@ function App() {
       { id: 'teams', label: 'Teams', tabs: ['All Teams'] },
       { id: 'tournaments', label: 'Tournaments', tabs: ['All', 'Drafts', 'Published', 'Completed'] },
       { id: 'referees', label: 'Referee Management', tabs: [] },
-      { id: 'documents', label: 'Documents', tabs: ['Pending', 'Verified', 'Rejected'] },
-      { id: 'trials', label: 'Trials', tabs: ['Assigned', 'Completed', 'Retest'] },
       { id: 'notifications', label: 'Notifications', tabs: ['Team Requests'] },
     ],
     COACH: [
@@ -1206,7 +1203,6 @@ function App() {
     'coach-management': <GraduationCap size={20} strokeWidth={1.5} />,
     teams: <UsersRound size={20} strokeWidth={1.5} />,
     documents: <FileText size={20} strokeWidth={1.5} />,
-    trials: <ClipboardCheck size={20} strokeWidth={1.5} />,
     notifications: <Bell size={20} strokeWidth={1.5} />,
     'assigned-trials': <ClipboardCheck size={20} strokeWidth={1.5} />,
     'my-teams': <UsersRound size={20} strokeWidth={1.5} />,
@@ -1839,7 +1835,6 @@ function App() {
         setDashboardStats({
           totalPlayers: data.data.totalPlayers ?? 0,
           pendingApplications: data.data.pendingApplications ?? 0,
-          activeTrialsCount: data.data.activeTrialsCount ?? 0,
           coachesCount: data.data.coachesCount ?? 0,
           recentApplications: data.data.recentApplications ?? [],
         })
@@ -2159,7 +2154,15 @@ function App() {
                   {activeModuleId === 'dashboard' && me?.role === 'ADMIN' ? (
                     <DashboardContent
                       apiBaseUrl={API_BASE_URL}
-                      stats={dashboardStats ? { totalPlayers: dashboardStats.totalPlayers, pendingApplications: dashboardStats.pendingApplications, activeTrialsCount: dashboardStats.activeTrialsCount, coachesCount: dashboardStats.coachesCount } : undefined}
+                      stats={
+                        dashboardStats
+                          ? {
+                              totalPlayers: dashboardStats.totalPlayers,
+                              pendingApplications: dashboardStats.pendingApplications,
+                              coachesCount: dashboardStats.coachesCount,
+                            }
+                          : undefined
+                      }
                       recentApplications={dashboardStats?.recentApplications}
                       isLoading={isLoadingDashboard}
                       error={dashboardError}

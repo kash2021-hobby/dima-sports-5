@@ -2,17 +2,15 @@ import {
   Users,
   User,
   ClipboardList,
-  CalendarCheck,
   GraduationCap,
   Plus,
 } from 'lucide-react'
 
 type StatCardTheme = 'blue' | 'orange' | 'green' | 'purple'
 
-const STAT_CARDS: Array<{ label: string; moduleId: 'players' | 'applications' | 'trials' | 'coach-management'; icon: typeof Users; theme: StatCardTheme }> = [
+const STAT_CARDS: Array<{ label: string; moduleId: 'players' | 'applications' | 'coach-management'; icon: typeof Users; theme: StatCardTheme }> = [
   { label: 'Total Players', moduleId: 'players', icon: Users, theme: 'blue' },
   { label: 'Applications', moduleId: 'applications', icon: ClipboardList, theme: 'orange' },
-  { label: 'Active Trials', moduleId: 'trials', icon: CalendarCheck, theme: 'green' },
   { label: 'Coaches', moduleId: 'coach-management', icon: GraduationCap, theme: 'purple' },
 ]
 
@@ -25,7 +23,6 @@ const UPCOMING_EVENTS = [
 export type DashboardStats = {
   totalPlayers: number
   pendingApplications: number
-  activeTrialsCount: number
   coachesCount: number
 }
 
@@ -57,7 +54,7 @@ type DashboardContentProps = {
   onActiveTeams?: () => void
 }
 
-const STAT_KEYS: (keyof DashboardStats)[] = ['totalPlayers', 'pendingApplications', 'activeTrialsCount', 'coachesCount']
+const STAT_KEYS: (keyof DashboardStats)[] = ['totalPlayers', 'pendingApplications', 'coachesCount']
 
 function formatDate(value: string | undefined | null): string {
   if (!value) return '—'

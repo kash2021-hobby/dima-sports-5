@@ -825,10 +825,9 @@ export async function getDashboardStats(req: AuthRequest, res: Response): Promis
       return;
     }
 
-    const [totalPlayers, pendingApplications, activeTrialsCount, coachesCount, recentRows] = await Promise.all([
+    const [totalPlayers, pendingApplications, coachesCount, recentRows] = await Promise.all([
       prisma.player.count(),
       prisma.playerApplication.count({ where: { status: { in: [...PENDING_REVIEW_STATUSES] } } }),
-      prisma.trial.count({ where: { status: 'PENDING' } }),
       prisma.coach.count(),
       prisma.playerApplication.findMany({
         where: { status: { not: 'DRAFT' } },
@@ -928,7 +927,6 @@ export async function getDashboardStats(req: AuthRequest, res: Response): Promis
       data: {
         totalPlayers,
         pendingApplications,
-        activeTrialsCount,
         coachesCount,
         recentApplications,
       },
