@@ -775,19 +775,51 @@ function App() {
 
   async function openDocumentPreview(documentId: string) {
     if (!token) return
-    const res = await fetch(`${API_BASE_URL}/api/documents/${documentId}`, {
-      headers: { Authorization: `Bearer ${token}` },
-    })
-    const data = await res.json()
-    if (!res.ok || !data?.success) {
-      throw new Error(data?.message || 'Failed to load document')
+    setError(null)
+
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/documents/${documentId}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      const data = await res.json()
+      if (!res.ok || !data?.success) {
+        throw new Error(data?.message || 'Failed to load document')
+      }
+
+      const doc = data.data?.document as any
+      const fileUrl = doc?.fileUrl as string | undefined
+      if (!fileUrl) throw new Error('Document fileUrl missing')
+
+      const absoluteUrl = fileUrl.startsWith('http')
+        ? fileUrl
+        : `${API_BASE_URL}${fileUrl.startsWith('/') ? fileUrl : `/${fileUrl}`}`
+
+      const fileRes = await fetch(absoluteUrl, {
+        headers: { Authorization: `Bearer ${token}` },
+      })
+
+      if (!fileRes.ok) {
+        throw new Error('Failed to fetch document file')
+      }
+
+      const blob = await fileRes.blob()
+      const objectUrl = URL.createObjectURL(blob)
+
+      setPreviewUrl((current) => {
+        if (current) {
+          URL.revokeObjectURL(current)
+        }
+        return objectUrl
+      })
+
+      const mimeType = blob.type || doc?.mimeType || null
+
+      setPreviewTitle(doc?.fileName || doc?.documentType || 'Document preview')
+      setPreviewMimeType(typeof mimeType === 'string' && mimeType.length > 0 ? mimeType : null)
+    } catch (err: any) {
+      setError(err?.message || 'Failed to open document preview')
+      throw err
     }
-    const doc = data.data?.document as any
-    const fileUrl = doc?.fileUrl as string | undefined
-    if (!fileUrl) throw new Error('Document fileUrl missing')
-    setPreviewUrl(`${API_BASE_URL}${fileUrl}`)
-    setPreviewTitle(doc?.fileName || doc?.documentType || 'Document preview')
-    setPreviewMimeType(doc?.mimeType || null)
   }
 
   const normalizePhoneForCompare = (value: string): string => {
@@ -2780,15 +2812,13 @@ function App() {
                                             <span style={{ fontWeight: 600 }}>{doc.documentType}</span>
                                             {doc.fileName ? ` – ${doc.fileName}` : ''}
                                           </div>
-                                          {doc.fileUrl && (
+                                          {doc.id && (
                                             <button
                                               type="button"
                                               className="button button--primary"
                                               style={{ padding: '4px 10px', fontSize: '0.8rem', whiteSpace: 'nowrap' }}
                                               onClick={() => {
-                                                const base = doc.fileUrl.startsWith('http') ? '' : API_BASE_URL
-                                                const path = doc.fileUrl.startsWith('/') ? doc.fileUrl : `/${doc.fileUrl}`
-                                                window.open(doc.fileUrl.startsWith('http') ? doc.fileUrl : `${base}${path}`, '_blank', 'noopener,noreferrer')
+                                                void openDocumentPreview(doc.id)
                                               }}
                                             >
                                               View
@@ -2883,16 +2913,13 @@ function App() {
                                   <div className="profile-card__grid" style={{ marginBottom: '16px' }}>
                                     <div>
                                       <p className="profile-card__label">Medical Report</p>
-                                      {medicalCheck.medicalReport?.fileUrl ? (
+                                      {medicalCheck.medicalReport?.id ? (
                                         <button
                                           type="button"
                                           className="button button--primary"
                                           style={{ padding: '6px 14px', fontSize: '0.875rem' }}
                                           onClick={() => {
-                                            const doc = medicalCheck.medicalReport as any
-                                            const base = doc.fileUrl?.startsWith('http') ? '' : API_BASE_URL
-                                            const path = (doc.fileUrl || '').startsWith('/') ? doc.fileUrl : `/${doc.fileUrl || ''}`
-                                            window.open(doc.fileUrl?.startsWith('http') ? doc.fileUrl : `${base}${path}`, '_blank', 'noopener,noreferrer')
+                                            void openDocumentPreview(medicalCheck.medicalReport!.id)
                                           }}
                                         >
                                           View Medical Report
@@ -4365,7 +4392,8 @@ function App() {
                       {selectedTrial && selectedTrial.application && (() => {
                         const docs = (selectedTrial.application as any).documents as any[] | undefined
                         const aadhaarDoc = Array.isArray(docs)
-                          ? docs.find((d) => d.documentType === 'AADHAAR_CARD')
+                          ? docs.find((d) => d.documentType === 'AADHAAR_CARD') ||
+                            docs.find((d) => d.documentType === 'ID_PROOF')
                           : null
 
                         const aadhaarDocumentUrl =
@@ -4384,6 +4412,7 @@ function App() {
                             isOpen={isAadhaarModalOpen}
                             aadhaarNumber={(selectedTrial.application as any)?.aadhaarNumber || ''}
                             aadhaarDocumentUrl={aadhaarDocumentUrl}
+                            authToken={token || undefined}
                             onClose={() => setIsAadhaarModalOpen(false)}
                             onMarkVerified={() => setIsAadhaarVerified(true)}
                           />
@@ -4632,27 +4661,17 @@ function App() {
                                                         </div>
                                                       </div>
                                                       <div className="flex items-center gap-2">
-                                                        <button
-                                                          type="button"
-                                                          className="inline-flex items-center px-3 py-1.5 border border-gray-300 rounded-lg text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
-                                                          onClick={() => {
-                                                            const base = doc.fileUrl?.startsWith('http')
-                                                              ? ''
-                                                              : API_BASE_URL
-                                                            const path = (doc.fileUrl || '').startsWith('/')
-                                                              ? doc.fileUrl
-                                                              : `/${doc.fileUrl || ''}`
-                                                            window.open(
-                                                              doc.fileUrl?.startsWith('http')
-                                                                ? doc.fileUrl
-                                                                : `${base}${path}`,
-                                                              '_blank',
-                                                              'noopener,noreferrer',
-                                                            )
-                                                          }}
-                                                        >
-                                                          View
-                                                        </button>
+                                                        {doc.id && (
+                                                          <button
+                                                            type="button"
+                                                            className="inline-flex items-center px-3 py-1.5 border border-gray-300 rounded-lg text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                                                            onClick={() => {
+                                                              void openDocumentPreview(doc.id)
+                                                            }}
+                                                          >
+                                                            View
+                                                          </button>
+                                                        )}
                                                         {isAadhaarDoc &&
                                                           (isAadhaarVerified ? (
                                                             <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium bg-emerald-50 text-emerald-700 border border-emerald-200">
@@ -5214,32 +5233,22 @@ function App() {
                                                               {doc.verificationStatus}
                                                             </span>
                                                           </div>
-                                                          <button
-                                                            type="button"
-                                                            className="button button--primary"
-                                                            style={{
-                                                              flexShrink: 0,
-                                                              padding: '6px 14px',
-                                                              fontSize: '0.875rem',
-                                                            }}
-                                                            onClick={() => {
-                                                              const base = doc.fileUrl?.startsWith('http')
-                                                                ? ''
-                                                                : API_BASE_URL
-                                                              const path = (doc.fileUrl || '').startsWith('/')
-                                                                ? doc.fileUrl
-                                                                : `/${doc.fileUrl || ''}`
-                                                              window.open(
-                                                                doc.fileUrl?.startsWith('http')
-                                                                  ? doc.fileUrl
-                                                                  : `${base}${path}`,
-                                                                '_blank',
-                                                                'noopener,noreferrer',
-                                                              )
-                                                            }}
-                                                          >
-                                                            View Report
-                                                          </button>
+                                                          {doc.id && (
+                                                            <button
+                                                              type="button"
+                                                              className="button button--primary"
+                                                              style={{
+                                                                flexShrink: 0,
+                                                                padding: '6px 14px',
+                                                                fontSize: '0.875rem',
+                                                              }}
+                                                              onClick={() => {
+                                                                void openDocumentPreview(doc.id)
+                                                              }}
+                                                            >
+                                                              View Report
+                                                            </button>
+                                                          )}
                                                         </div>
                                                       ))}
                                                   </div>

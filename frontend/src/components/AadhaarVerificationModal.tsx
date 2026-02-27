@@ -1,9 +1,11 @@
+import { useEffect, useState } from 'react'
 import { X, Copy } from 'lucide-react'
 
 type AadhaarVerificationModalProps = {
   isOpen: boolean
   aadhaarNumber: string
   aadhaarDocumentUrl?: string
+  authToken?: string
   onClose: () => void
   onMarkVerified: () => void
 }
@@ -12,9 +14,71 @@ export function AadhaarVerificationModal({
   isOpen,
   aadhaarNumber,
   aadhaarDocumentUrl,
+  authToken,
   onClose,
   onMarkVerified,
 }: AadhaarVerificationModalProps) {
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null)
+  const [isLoadingPreview, setIsLoadingPreview] = useState(false)
+
+  useEffect(() => {
+    let cancelled = false
+
+    async function loadPreview() {
+      if (!isOpen) {
+        setPreviewUrl(null)
+        return
+      }
+
+      if (!aadhaarDocumentUrl || !authToken) {
+        setPreviewUrl(null)
+        return
+      }
+
+      setIsLoadingPreview(true)
+      try {
+        const res = await fetch(aadhaarDocumentUrl, {
+          headers: { Authorization: `Bearer ${authToken}` },
+        })
+
+        if (!res.ok) {
+          throw new Error('Failed to load document preview')
+        }
+
+        const blob = await res.blob()
+        if (cancelled) return
+
+        const objectUrl = URL.createObjectURL(blob)
+        setPreviewUrl((current) => {
+          if (current) {
+            URL.revokeObjectURL(current)
+          }
+          return objectUrl
+        })
+      } catch {
+        if (!cancelled) {
+          setPreviewUrl(null)
+        }
+      } finally {
+        if (!cancelled) {
+          setIsLoadingPreview(false)
+        }
+      }
+    }
+
+    void loadPreview()
+
+    return () => {
+      cancelled = true
+      setPreviewUrl((current) => {
+        if (current) {
+          URL.revokeObjectURL(current)
+        }
+        return null
+      })
+    }
+  }, [isOpen, aadhaarDocumentUrl, authToken])
+
   if (!isOpen) return null
 
   const handleCopy = () => {
@@ -70,9 +134,11 @@ export function AadhaarVerificationModal({
             </div>
 
             <div className="mt-6 aspect-video bg-gray-50 rounded-lg border border-gray-200 flex items-center justify-center overflow-hidden">
-              {aadhaarDocumentUrl ? (
+              {isLoadingPreview ? (
+                <span className="text-gray-400 text-sm">Loading Aadhaar document...</span>
+              ) : previewUrl ? (
                 <img
-                  src={aadhaarDocumentUrl}
+                  src={previewUrl}
                   alt="Aadhaar document"
                   className="h-full w-full object-contain"
                 />
