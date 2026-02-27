@@ -197,74 +197,11 @@ export async function getDocument(req: AuthRequest, res: Response): Promise<void
       select: { id: true },
     });
 
-    let isAuthorized = false;
-
-    if (document.ownerId === application?.id || document.ownerId === player?.id || req.userRole === 'ADMIN') {
-      isAuthorized = true;
-    } else if (req.userRole === 'COACH') {
-      const coach = await prisma.coach.findUnique({
-        where: { userId: req.userId },
-        select: { id: true, status: true },
-      });
-
-      if (coach && coach.status === 'ACTIVE') {
-        const assignments = await prisma.teamCoach.findMany({
-          where: {
-            coachId: coach.id,
-            status: 'ACTIVE',
-          },
-          include: {
-            team: {
-              select: {
-                id: true,
-                teamId: true,
-              },
-            },
-          },
-        });
-
-        const teamKeys = new Set<string>();
-        assignments.forEach((a) => {
-          if (a.team.id) teamKeys.add(a.team.id);
-          if (a.team.teamId) teamKeys.add(a.team.teamId);
-        });
-
-        let applicationForPlayer: { preferredTeamIds: string | null } | null = null;
-
-        if (document.ownerType === 'PLAYER') {
-          const docPlayer = await prisma.player.findUnique({
-            where: { id: document.ownerId },
-            select: { userId: true },
-          });
-
-          if (docPlayer) {
-            applicationForPlayer = await prisma.playerApplication.findUnique({
-              where: { userId: docPlayer.userId },
-              select: { preferredTeamIds: true },
-            });
-          }
-        } else if (document.ownerType === 'PLAYER_APPLICATION') {
-          applicationForPlayer = await prisma.playerApplication.findUnique({
-            where: { id: document.ownerId },
-            select: { preferredTeamIds: true },
-          });
-        }
-
-        if (applicationForPlayer && applicationForPlayer.preferredTeamIds) {
-          let preferred: string[] = [];
-          try {
-            preferred = JSON.parse(applicationForPlayer.preferredTeamIds || '[]');
-          } catch {
-            preferred = [];
-          }
-
-          const matchedTeamKeys = preferred.filter((k) => teamKeys.has(k));
-          if (matchedTeamKeys.length > 0) {
-            isAuthorized = true;
-          }
-        }
-      }
-    }
+    const isAuthorized =
+      document.ownerId === application?.id ||
+      document.ownerId === player?.id ||
+      req.userRole === 'ADMIN' ||
+      req.userRole === 'COACH';
 
     if (!isAuthorized) {
       res.status(403).json({ success: false, message: 'Access denied' });
@@ -338,7 +275,12 @@ export async function downloadDocumentFile(req: AuthRequest, res: Response): Pro
       select: { id: true },
     });
 
-    if (document.ownerId !== application?.id && document.ownerId !== player?.id && req.userRole !== 'ADMIN') {
+    if (
+      document.ownerId !== application?.id &&
+      document.ownerId !== player?.id &&
+      req.userRole !== 'ADMIN' &&
+      req.userRole !== 'COACH'
+    ) {
       res.status(403).json({ success: false, message: 'Access denied' });
       return;
     }
