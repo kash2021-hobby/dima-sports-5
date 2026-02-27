@@ -361,7 +361,13 @@ function App() {
         return
       }
       // Set token and user data immediately from login response
-      setToken(data.data.token)
+      const newToken = data.data.token as string
+      setToken(newToken)
+      try {
+        window.localStorage.setItem('authToken', newToken)
+      } catch {
+        // Ignore storage errors (e.g., disabled cookies/storage)
+      }
       if (data.data.user) {
         setMe(data.data.user)
       }
@@ -501,6 +507,11 @@ function App() {
 
   function logout() {
     setToken(null)
+    try {
+      window.localStorage.removeItem('authToken')
+    } catch {
+      // Ignore storage errors
+    }
     setMe(null)
     setError(null)
     setSuccessMessage(null)
@@ -545,6 +556,18 @@ function App() {
     setSignupStep('phone')
     setSignupMessage(null)
   }
+
+  useEffect(() => {
+    // On initial load, try to restore auth token from localStorage
+    try {
+      const storedToken = window.localStorage.getItem('authToken')
+      if (storedToken) {
+        setToken(storedToken)
+      }
+    } catch {
+      // Ignore storage errors
+    }
+  }, [])
 
   useEffect(() => {
     if (!token) return
