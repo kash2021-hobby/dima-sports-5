@@ -9,6 +9,7 @@ router.use(authenticateToken);
 
 router.post('/upload', documentController.upload.single('file'), documentController.uploadDocument);
 router.get('/my-documents', documentController.getMyDocuments);
+router.get('/files/:fileKey', documentController.downloadDocumentFile);
 router.get('/:id', documentController.getDocument);
 
 export default router;

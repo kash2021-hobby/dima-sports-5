@@ -1,8 +1,8 @@
 import { Request, Response } from 'express';
-import path from 'path';
 import prisma from '../config/database';
 import { notifyTrialAssignment } from '../services/notification.service';
 import { AuthRequest } from '../middleware/auth.middleware';
+import { uploadFile } from '../services/storage.service';
 
 /**
  * Admin: Assign trial to coach
@@ -462,7 +462,8 @@ export async function submitMedicalForm(req: AuthRequest, res: Response): Promis
     let medicalReportDocumentId: string | null = (trial as any).medicalReportDocumentId || null;
 
     if (req.file) {
-      const publicFileUrl = `/uploads/${path.basename(req.file.path).replace(/\\/g, '/')}`;
+      const key = `MEDICAL_REPORT_FOOTBALL/${trial.applicationId}-${Date.now()}-${req.file.originalname}`;
+      const uploadedKey = await uploadFile(req.file.buffer, key, req.file.mimetype);
 
       // Enforce single medical report per application: reuse or replace existing document
       const existingReports = await prisma.document.findMany({
@@ -486,7 +487,7 @@ export async function submitMedicalForm(req: AuthRequest, res: Response): Promis
             ownerType: 'PLAYER_APPLICATION',
             ownerId: trial.applicationId,
             documentType: 'MEDICAL_REPORT_FOOTBALL',
-            fileUrl: publicFileUrl,
+            fileUrl: uploadedKey,
             fileName: req.file.originalname,
             fileSize: req.file.size,
             mimeType: req.file.mimetype,
@@ -502,7 +503,7 @@ export async function submitMedicalForm(req: AuthRequest, res: Response): Promis
         const updated = await prisma.document.update({
           where: { id: baseDocument.id },
           data: {
-            fileUrl: publicFileUrl,
+            fileUrl: uploadedKey,
             fileName: req.file.originalname,
             fileSize: req.file.size,
             mimeType: req.file.mimetype,
@@ -597,7 +598,8 @@ export async function uploadMedicalReport(req: AuthRequest, res: Response): Prom
       return;
     }
 
-    const publicFileUrl = `/uploads/${path.basename(req.file.path).replace(/\\/g, '/')}`;
+    const key = `MEDICAL_REPORT_FOOTBALL/${trial.applicationId}-${Date.now()}-${req.file.originalname}`;
+    const uploadedKey = await uploadFile(req.file.buffer, key, req.file.mimetype);
 
     // Enforce single medical report per application: reuse or replace existing document
     const existingReports = await prisma.document.findMany({
@@ -623,7 +625,7 @@ export async function uploadMedicalReport(req: AuthRequest, res: Response): Prom
           ownerType: 'PLAYER_APPLICATION',
           ownerId: trial.applicationId,
           documentType: 'MEDICAL_REPORT_FOOTBALL',
-          fileUrl: publicFileUrl,
+          fileUrl: uploadedKey,
           fileName: req.file.originalname,
           fileSize: req.file.size,
           mimeType: req.file.mimetype,
@@ -638,7 +640,7 @@ export async function uploadMedicalReport(req: AuthRequest, res: Response): Prom
       const updated = await prisma.document.update({
         where: { id: baseDocument.id },
         data: {
-          fileUrl: publicFileUrl,
+          fileUrl: uploadedKey,
           fileName: req.file.originalname,
           fileSize: req.file.size,
           mimeType: req.file.mimetype,

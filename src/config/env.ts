@@ -35,6 +35,11 @@ export const config = {
   bucketSecretAccessKey: process.env.BUCKET_SECRET_ACCESS_KEY || '',
   bucketUrl: process.env.BUCKET_URL || '',
   
+  // Google Drive
+  googleDriveServiceAccountEmail: process.env.GOOGLE_DRIVE_SERVICE_ACCOUNT_EMAIL || '',
+  googleDrivePrivateKey: process.env.GOOGLE_DRIVE_PRIVATE_KEY?.replace(/\\n/g, '\n') || '',
+  googleDriveFolderId: process.env.GOOGLE_DRIVE_FOLDER_ID || '',
+  
   // Firebase
   firebaseProjectId: process.env.FIREBASE_PROJECT_ID || '',
   firebasePrivateKey: process.env.FIREBASE_PRIVATE_KEY?.replace(/\\n/g, '\n') || '',

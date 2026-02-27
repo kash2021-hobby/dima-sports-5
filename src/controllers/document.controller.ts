@@ -5,7 +5,7 @@ import prisma from '../config/database';
 import { config } from '../config/env';
 import { notifyDocumentVerification } from '../services/notification.service';
 import { AuthRequest } from '../middleware/auth.middleware';
-import { uploadFile, getPresignedUrl } from '../services/storage.service';
+import { uploadFile, getPresignedUrl, getDriveFileStream } from '../services/storage.service';
 
 // Configure multer for file uploads (memory storage, files kept in-memory as Buffer)
 const storage = multer.memoryStorage();
@@ -211,5 +211,69 @@ export async function getDocument(req: AuthRequest, res: Response): Promise<void
   } catch (error: any) {
     console.error('Get document error:', error);
     res.status(500).json({ success: false, message: 'Failed to get document', error: error.message });
+  }
+}
+
+/**
+ * Download document file (proxied via backend from Google Drive)
+ */
+export async function downloadDocumentFile(req: AuthRequest, res: Response): Promise<void> {
+  try {
+    if (!req.userId) {
+      res.status(401).json({ success: false, message: 'Authentication required' });
+      return;
+    }
+
+    const { fileKey } = req.params;
+
+    const document = await prisma.document.findFirst({
+      where: { fileUrl: fileKey },
+    });
+
+    if (!document) {
+      res.status(404).json({ success: false, message: 'Document not found' });
+      return;
+    }
+
+    const application = await prisma.playerApplication.findUnique({
+      where: { userId: req.userId },
+      select: { id: true },
+    });
+
+    const player = await prisma.player.findUnique({
+      where: { userId: req.userId },
+      select: { id: true },
+    });
+
+    if (document.ownerId !== application?.id && document.ownerId !== player?.id && req.userRole !== 'ADMIN') {
+      res.status(403).json({ success: false, message: 'Access denied' });
+      return;
+    }
+
+    const stream = await getDriveFileStream(fileKey);
+
+    const mimeType = document.mimeType || 'application/octet-stream';
+    const fileName = document.fileName || 'document';
+
+    res.setHeader('Content-Type', mimeType);
+    res.setHeader('Content-Disposition', `inline; filename="${encodeURIComponent(fileName)}"`);
+
+    stream.on('error', (err) => {
+      console.error('Stream document error:', err);
+      if (!res.headersSent) {
+        res.status(500).end('Failed to read file');
+      } else {
+        res.end();
+      }
+    });
+
+    stream.pipe(res);
+  } catch (error: any) {
+    console.error('Download document file error:', error);
+    if (!res.headersSent) {
+      res.status(500).json({ success: false, message: 'Failed to download document', error: error.message });
+    } else {
+      res.end();
+    }
   }
 }
